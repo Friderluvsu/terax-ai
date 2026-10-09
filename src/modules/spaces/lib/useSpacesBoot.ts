@@ -26,6 +26,20 @@ type Params = {
   adoptWorkspaceEnv: (env: WorkspaceEnv) => Promise<string | null>;
 };
 
+// Local spawns need their cwd authorized first. SSH roots only gate later
+// remote mutations, and resolving them may wait on an offline host.
+export function splitBootAuthorizations(
+  cwds: { cwd: string; env: WorkspaceEnv }[],
+): {
+  awaited: { cwd: string; env: WorkspaceEnv }[];
+  background: { cwd: string; env: WorkspaceEnv }[];
+} {
+  return {
+    awaited: cwds.filter((c) => c.env.kind !== "ssh"),
+    background: cwds.filter((c) => c.env.kind === "ssh"),
+  };
+}
+
 export function uniqueCwds(
   tabs: Tab[],
   envOf: (spaceId: string) => WorkspaceEnv,
@@ -116,9 +130,14 @@ export function useSpacesBoot({
           restored.push(freshTerminalTab(active, cwd, allocId));
         }
 
+        const { awaited, background } = splitBootAuthorizations(
+          uniqueCwds(restored, (id) => envForSpace(id, spaces)),
+        );
+        for (const { cwd, env: cwdEnv } of background)
+          void native.workspaceAuthorize(cwd, cwdEnv).catch(() => {});
         await Promise.allSettled(
-          uniqueCwds(restored, (id) => envForSpace(id, spaces)).map(
-            ({ cwd, env: cwdEnv }) => native.workspaceAuthorize(cwd, cwdEnv),
+          awaited.map(({ cwd, env: cwdEnv }) =>
+            native.workspaceAuthorize(cwd, cwdEnv),
           ),
         );
 
