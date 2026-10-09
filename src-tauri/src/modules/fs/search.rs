@@ -4,7 +4,11 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
 use super::to_canon;
+#[cfg(unix)]
+use crate::modules::remote::search as remote_search;
+use crate::modules::remote::RemoteState;
 use crate::modules::workspace::{local_path, WorkspaceEnv};
+use tauri::{AppHandle, State};
 
 #[derive(Serialize, Clone)]
 pub struct SearchHit {
@@ -44,8 +48,7 @@ const PRUNE_DIRS: &[&str] = &[
     "__pycache__",
 ];
 
-#[tauri::command]
-pub fn fs_search(
+pub fn fs_search_local(
     root: String,
     query: String,
     limit: Option<usize>,
@@ -123,6 +126,43 @@ pub fn fs_search(
     Ok(SearchResult { hits, truncated })
 }
 
+#[cfg(unix)]
+fn search_remote(
+    dir: &std::path::Path,
+    host: &str,
+    root: &str,
+    q: &str,
+    cap: usize,
+    show_hidden: bool,
+) -> Result<SearchResult, String> {
+    let listing = remote_search::list_files(dir, host, root, show_hidden, None)?;
+    let mut truncated = listing.truncated;
+    let mut files = listing.files;
+    if files.len() > MAX_SCANNED {
+        files.truncate(MAX_SCANNED);
+        truncated = true;
+    }
+    let mut cands = Vec::with_capacity(files.len() * 2);
+    let dirs = remote_search::derive_dirs(&files);
+    for (rel, is_dir) in dirs
+        .into_iter()
+        .map(|d| (d, true))
+        .chain(files.into_iter().map(|f| (f, false)))
+    {
+        let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+        cands.push(SearchHit {
+            path: remote_search::join_display(root, &rel),
+            rel,
+            name,
+            is_dir,
+        });
+    }
+    Ok(SearchResult {
+        hits: rank_fuzzy(cands, q, cap),
+        truncated,
+    })
+}
+
 /// Fuzzy-rank candidates against the query (path-aware, smart-case), keeping
 /// the top `cap`. Ties break toward shorter relative paths.
 fn rank_fuzzy(cands: Vec<SearchHit>, query: &str, cap: usize) -> Vec<SearchHit> {
@@ -147,27 +187,30 @@ fn rank_fuzzy(cands: Vec<SearchHit>, query: &str, cap: usize) -> Vec<SearchHit> 
         .collect()
 }
 
+const LIST_DEFAULT_LIMIT: usize = 2_000;
+const LIST_HARD_LIMIT: usize = 10_000;
+const LIST_DEFAULT_DEPTH: usize = 8;
+const LIST_HARD_DEPTH: usize = 16;
+
 #[derive(Serialize)]
 pub struct ListFilesResult {
     pub files: Vec<String>,
     pub truncated: bool,
 }
 
-#[tauri::command]
-pub fn fs_list_files(
+pub fn fs_list_files_local(
     root: String,
     limit: Option<usize>,
     max_depth: Option<usize>,
     workspace: Option<WorkspaceEnv>,
     show_hidden: Option<bool>,
 ) -> Result<ListFilesResult, String> {
-    const DEFAULT_LIMIT: usize = 2_000;
-    const HARD_LIMIT: usize = 10_000;
-    const DEFAULT_DEPTH: usize = 8;
-    const HARD_DEPTH: usize = 16;
-
-    let cap = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, HARD_LIMIT);
-    let depth = max_depth.unwrap_or(DEFAULT_DEPTH).clamp(1, HARD_DEPTH);
+    let cap = limit
+        .unwrap_or(LIST_DEFAULT_LIMIT)
+        .clamp(1, LIST_HARD_LIMIT);
+    let depth = max_depth
+        .unwrap_or(LIST_DEFAULT_DEPTH)
+        .clamp(1, LIST_HARD_DEPTH);
     let show_hidden = show_hidden.unwrap_or(false);
     let workspace = WorkspaceEnv::from_option(workspace);
     let root_path = local_path(&root, &workspace)?;
@@ -226,6 +269,86 @@ pub fn fs_list_files(
 
     files.sort_by_key(|a| a.to_lowercase());
     Ok(ListFilesResult { files, truncated })
+}
+
+#[tauri::command]
+pub async fn fs_search(
+    app: AppHandle,
+    remote: State<'_, RemoteState>,
+    root: String,
+    query: String,
+    limit: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+    show_hidden: Option<bool>,
+) -> Result<SearchResult, String> {
+    #[cfg(unix)]
+    if let Some(WorkspaceEnv::Ssh { host }) = &workspace {
+        let q = query.trim().to_string();
+        if q.is_empty() {
+            return Ok(SearchResult {
+                hits: Vec::new(),
+                truncated: false,
+            });
+        }
+        let cap = limit.unwrap_or(200).min(1000);
+        let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
+        let host = host.clone();
+        let show_hidden = show_hidden.unwrap_or(false);
+        return tauri::async_runtime::spawn_blocking(move || {
+            search_remote(&dir, &host, &root, &q, cap, show_hidden)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    let _ = (&app, &remote);
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_search_local(root, query, limit, workspace, show_hidden)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_list_files(
+    app: AppHandle,
+    remote: State<'_, RemoteState>,
+    root: String,
+    limit: Option<usize>,
+    max_depth: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+    show_hidden: Option<bool>,
+) -> Result<ListFilesResult, String> {
+    #[cfg(unix)]
+    if let Some(WorkspaceEnv::Ssh { host }) = &workspace {
+        let cap = limit
+            .unwrap_or(LIST_DEFAULT_LIMIT)
+            .clamp(1, LIST_HARD_LIMIT);
+        let depth = max_depth
+            .unwrap_or(LIST_DEFAULT_DEPTH)
+            .clamp(1, LIST_HARD_DEPTH);
+        let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
+        let host = host.clone();
+        let show_hidden = show_hidden.unwrap_or(false);
+        return tauri::async_runtime::spawn_blocking(move || {
+            let listing = remote_search::list_files(&dir, &host, &root, show_hidden, Some(depth))?;
+            let mut files = listing.files;
+            let mut truncated = listing.truncated;
+            if files.len() > cap {
+                files.truncate(cap);
+                truncated = true;
+            }
+            files.sort_by_key(|a| a.to_lowercase());
+            Ok(ListFilesResult { files, truncated })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    let _ = (&app, &remote);
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_list_files_local(root, limit, max_depth, workspace, show_hidden)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn display_path(

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::modules::fs::{file, grep, mutate, search, watch};
+use crate::modules::fs::{file, mutate, watch};
 use crate::modules::git::{operations, utils};
 use crate::modules::shell::{background, build_oneshot_command, run_blocking_inner, session};
 use crate::modules::workspace::{
@@ -115,37 +115,6 @@ fn workspace_auth_rejects_ssh() {
     assert!(!fresh.is_authorized(&fx.root));
     assert_eq!(user_spawn_cwd_or_home(&fresh, Some(&root), &ssh()), None);
     assert!(!fresh.is_authorized(&fx.root));
-}
-
-#[test]
-fn unported_fs_reads_reject_ssh() {
-    let fx = Fixture::new();
-    let root = fx.root_str();
-
-    assert_ssh_err(search::fs_search(
-        root.clone(),
-        "a".into(),
-        None,
-        Some(ssh()),
-        Some(true),
-    ));
-    assert_ssh_err(search::fs_list_files(
-        root.clone(),
-        None,
-        None,
-        Some(ssh()),
-        Some(true),
-    ));
-    assert_ssh_err(grep::fs_grep(
-        "secret".into(),
-        root.clone(),
-        None,
-        None,
-        None,
-        Some(ssh()),
-    ));
-    assert_ssh_err(grep::fs_glob("*.txt".into(), root, None, Some(ssh())));
-    fx.assert_untouched();
 }
 
 #[test]

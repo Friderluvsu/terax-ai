@@ -10,11 +10,16 @@ use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
 
 use super::to_canon;
+#[cfg(unix)]
+use crate::modules::remote::search::{self as remote_search, CaseMode, Tool};
+use crate::modules::remote::RemoteState;
 use crate::modules::workspace::{local_path, WorkspaceEnv};
+use tauri::{AppHandle, Manager, State};
 
 const FILE_SIZE_CAP: u64 = 5 * 1024 * 1024;
 const DEFAULT_MAX_RESULTS: usize = 200;
 const HARD_MAX_RESULTS: usize = 2000;
+const GLOB_DEFAULT_RESULTS: usize = 500;
 
 /// Supersession counter for interactive content search. Each new interactive
 /// query bumps the generation; in-flight walks observe the change and quit,
@@ -169,8 +174,51 @@ fn search_tree(
     }
 }
 
-#[tauri::command]
-pub fn fs_grep(
+#[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
+fn grep_remote(
+    dir: &Path,
+    host: &str,
+    root: &str,
+    pattern: &str,
+    literal: bool,
+    case: CaseMode,
+    globs: &[String],
+    cap: usize,
+) -> Result<GrepResponse, String> {
+    let set = build_globset(globs)?;
+    let out = remote_search::grep(dir, host, root, pattern, literal, case, globs)?;
+    let mut truncated = out.truncated;
+    let mut files = std::collections::HashSet::new();
+    let mut hits = Vec::new();
+    for h in out.hits {
+        if out.tool == Tool::Find {
+            if let Some(set) = set.as_ref() {
+                if !set.is_match(&h.rel) {
+                    continue;
+                }
+            }
+        }
+        if hits.len() >= cap {
+            truncated = true;
+            break;
+        }
+        files.insert(h.rel.clone());
+        hits.push(GrepHit {
+            path: remote_search::join_display(root, &h.rel),
+            rel: h.rel,
+            line: h.line,
+            text: h.text,
+        });
+    }
+    Ok(GrepResponse {
+        hits,
+        truncated,
+        files_scanned: out.searched.unwrap_or(files.len()),
+    })
+}
+
+pub fn fs_grep_local(
     pattern: String,
     root: String,
     glob: Option<Vec<String>>,
@@ -209,11 +257,8 @@ pub fn fs_grep(
     ))
 }
 
-/// Interactive content search for the command palette. Treats the query as a
-/// literal (smart-case), and self-cancels when a newer query arrives.
-#[tauri::command]
-pub fn fs_grep_interactive(
-    state: tauri::State<'_, ContentSearchState>,
+fn grep_interactive_local(
+    state: &ContentSearchState,
     pattern: String,
     root: String,
     max_results: Option<usize>,
@@ -241,13 +286,7 @@ pub fn fs_grep_interactive(
 
     let cancel = || state.generation.load(Ordering::SeqCst) != my_gen;
     Ok(search_tree(
-        &root_path,
-        &root,
-        &workspace,
-        &matcher,
-        &None,
-        cap,
-        &cancel,
+        &root_path, &root, &workspace, &matcher, &None, cap, &cancel,
     ))
 }
 
@@ -263,8 +302,7 @@ pub struct GlobResponse {
     pub truncated: bool,
 }
 
-#[tauri::command]
-pub fn fs_glob(
+pub fn fs_glob_local(
     pattern: String,
     root: String,
     max_results: Option<usize>,
@@ -274,16 +312,19 @@ pub fn fs_glob(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root_path = local_path(&root, &workspace)?;
-    if !root_path.is_dir() {
-        return Err(format!("not a directory: {root}"));
-    }
-    let cap = max_results.unwrap_or(500).clamp(1, HARD_MAX_RESULTS);
+    let cap = max_results
+        .unwrap_or(GLOB_DEFAULT_RESULTS)
+        .clamp(1, HARD_MAX_RESULTS);
 
     let glob = Glob::new(&pattern).map_err(|e| format!("bad glob: {e}"))?;
     let mut gb = GlobSetBuilder::new();
     gb.add(glob);
     let set = gb.build().map_err(|e| format!("globset build: {e}"))?;
+
+    let root_path = local_path(&root, &workspace)?;
+    if !root_path.is_dir() {
+        return Err(format!("not a directory: {root}"));
+    }
 
     let walker = WalkBuilder::new(&root_path)
         .hidden(true)
@@ -320,6 +361,162 @@ pub fn fs_glob(
     }
 
     Ok(GlobResponse { hits, truncated })
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn fs_grep(
+    app: AppHandle,
+    remote: State<'_, RemoteState>,
+    pattern: String,
+    root: String,
+    glob: Option<Vec<String>>,
+    case_insensitive: Option<bool>,
+    max_results: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<GrepResponse, String> {
+    #[cfg(unix)]
+    if let Some(WorkspaceEnv::Ssh { host }) = &workspace {
+        if pattern.is_empty() {
+            return Err("empty pattern".into());
+        }
+        let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
+        let cap = max_results
+            .unwrap_or(DEFAULT_MAX_RESULTS)
+            .clamp(1, HARD_MAX_RESULTS);
+        let case = if case_insensitive.unwrap_or(false) {
+            CaseMode::Insensitive
+        } else {
+            CaseMode::Sensitive
+        };
+        let globs = glob.unwrap_or_default();
+        let host = host.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            grep_remote(&dir, &host, &root, &pattern, false, case, &globs, cap)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    let _ = (&app, &remote);
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_grep_local(
+            pattern,
+            root,
+            glob,
+            case_insensitive,
+            max_results,
+            workspace,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Interactive content search for the command palette. Treats the query as a
+/// literal (smart-case), and self-cancels when a newer query arrives.
+#[tauri::command]
+pub async fn fs_grep_interactive(
+    app: AppHandle,
+    remote: State<'_, RemoteState>,
+    state: State<'_, ContentSearchState>,
+    pattern: String,
+    root: String,
+    max_results: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<GrepResponse, String> {
+    #[cfg(unix)]
+    if let Some(WorkspaceEnv::Ssh { host }) = &workspace {
+        if pattern.trim().is_empty() {
+            return Err("empty pattern".into());
+        }
+        let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
+        let cap = max_results
+            .unwrap_or(DEFAULT_MAX_RESULTS)
+            .clamp(1, HARD_MAX_RESULTS);
+        let host = host.clone();
+        let handle = app.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            let res = grep_remote(
+                &dir,
+                &host,
+                &root,
+                &pattern,
+                true,
+                CaseMode::Smart,
+                &[],
+                cap,
+            )?;
+            let state = handle.state::<ContentSearchState>();
+            if state.generation.load(Ordering::SeqCst) != my_gen {
+                return Ok(GrepResponse {
+                    hits: Vec::new(),
+                    truncated: false,
+                    files_scanned: 0,
+                });
+            }
+            Ok(res)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    let _ = &remote;
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<ContentSearchState>();
+        grep_interactive_local(&state, pattern, root, max_results, workspace)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_glob(
+    app: AppHandle,
+    remote: State<'_, RemoteState>,
+    pattern: String,
+    root: String,
+    max_results: Option<usize>,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<GlobResponse, String> {
+    #[cfg(unix)]
+    if let Some(WorkspaceEnv::Ssh { host }) = &workspace {
+        if pattern.is_empty() {
+            return Err("empty pattern".into());
+        }
+        let cap = max_results
+            .unwrap_or(GLOB_DEFAULT_RESULTS)
+            .clamp(1, HARD_MAX_RESULTS);
+        let set = Glob::new(&pattern)
+            .map_err(|e| format!("bad glob: {e}"))?
+            .compile_matcher();
+        let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
+        let host = host.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            let listing = remote_search::list_files(&dir, &host, &root, false, None)?;
+            let mut truncated = listing.truncated;
+            let mut hits = Vec::new();
+            for rel in listing.files.into_iter().filter(|r| set.is_match(r)) {
+                if hits.len() >= cap {
+                    truncated = true;
+                    break;
+                }
+                hits.push(GlobHit {
+                    path: remote_search::join_display(&root, &rel),
+                    rel,
+                });
+            }
+            Ok(GlobResponse { hits, truncated })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    let _ = (&app, &remote);
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_glob_local(pattern, root, max_results, workspace)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn display_path(
@@ -364,11 +561,26 @@ mod tests {
         let ws = WorkspaceEnv::from_option(None);
         let root_display = dir.path().to_string_lossy().to_string();
 
-        let live = search_tree(dir.path(), &root_display, &ws, &matcher, &None, 100, &|| false);
+        let live = search_tree(
+            dir.path(),
+            &root_display,
+            &ws,
+            &matcher,
+            &None,
+            100,
+            &|| false,
+        );
         assert_eq!(live.hits.len(), 1, "uncancelled search finds the match");
 
-        let stopped =
-            search_tree(dir.path(), &root_display, &ws, &matcher, &None, 100, &|| true);
+        let stopped = search_tree(
+            dir.path(),
+            &root_display,
+            &ws,
+            &matcher,
+            &None,
+            100,
+            &|| true,
+        );
         assert!(stopped.hits.is_empty(), "cancelled search yields nothing");
     }
 }
