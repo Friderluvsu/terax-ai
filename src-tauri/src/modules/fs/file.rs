@@ -6,11 +6,12 @@ use serde::Serialize;
 use tauri::Emitter;
 use tempfile::NamedTempFile;
 
+use crate::modules::remote::fs::dispatch;
 use crate::modules::workspace::{local_path, WorkspaceEnv};
 
-const MAX_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+pub(crate) const MAX_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 /// Ceiling for explicit "open anyway"; mirrored as FORCE_READ_LIMIT in useDocument.ts.
-const FORCE_MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
+pub(crate) const FORCE_MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
 #[derive(Serialize)]
@@ -59,12 +60,17 @@ pub async fn fs_read_file(
     path: String,
     workspace: Option<WorkspaceEnv>,
     force: Option<bool>,
+    app: tauri::AppHandle,
 ) -> Result<ReadResult, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        return dispatch::read_file(&fs, &path, force.unwrap_or(false)).await;
+    }
     read_file_sync(&local_path(&path, &workspace)?, force.unwrap_or(false))
 }
 
-fn read_file_sync(p: &Path, force: bool) -> Result<ReadResult, String> {
+pub(crate) fn read_file_sync(p: &Path, force: bool) -> Result<ReadResult, String> {
     let meta = std::fs::metadata(p).map_err(|e| {
         log::debug!("fs_read_file stat({}) failed: {e}", p.display());
         e.to_string()
@@ -85,20 +91,25 @@ fn read_file_sync(p: &Path, force: bool) -> Result<ReadResult, String> {
         e.to_string()
     })?;
 
-    // Null-byte sniff on the first chunk. Not perfect (misses UTF-16 BOM
-    // cases) but catches the common "this is a PNG" mistake cheaply.
+    Ok(classify_bytes(bytes, size, mtime_millis(&meta)))
+}
+
+/// NUL sniff on the first chunk, then strict UTF-8. Shared with remote reads.
+pub(crate) fn classify_bytes(bytes: Vec<u8>, size: u64, mtime: u64) -> ReadResult {
+    // Not perfect (misses UTF-16 BOM cases) but catches the common
+    // "this is a PNG" mistake cheaply.
     let sniff_len = bytes.len().min(BINARY_SNIFF_BYTES);
     if bytes[..sniff_len].contains(&0) {
-        return Ok(ReadResult::Binary { size });
+        return ReadResult::Binary { size };
     }
 
     match String::from_utf8(bytes) {
-        Ok(content) => Ok(ReadResult::Text {
+        Ok(content) => ReadResult::Text {
             content,
             size,
-            mtime: mtime_millis(&meta),
-        }),
-        Err(_) => Ok(ReadResult::Binary { size }),
+            mtime,
+        },
+        Err(_) => ReadResult::Binary { size },
     }
 }
 
@@ -169,20 +180,36 @@ pub(crate) fn write_file_sync(
 pub async fn fs_canonicalize(
     path: String,
     workspace: Option<WorkspaceEnv>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        return dispatch::canonicalize(&fs, &path).await;
+    }
     let p = local_path(&path, &workspace)?;
     let canon = std::fs::canonicalize(&p).map_err(|e| e.to_string())?;
     Ok(super::to_canon(&canon))
 }
 
 #[tauri::command]
-pub async fn fs_stat(path: String, workspace: Option<WorkspaceEnv>) -> Result<FileStat, String> {
+pub async fn fs_stat(
+    path: String,
+    workspace: Option<WorkspaceEnv>,
+    app: tauri::AppHandle,
+) -> Result<FileStat, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = local_path(&path, &workspace)?;
-    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        return dispatch::stat(&fs, &path).await;
+    }
+    stat_sync(&local_path(&path, &workspace)?)
+}
+
+pub(crate) fn stat_sync(p: &Path) -> Result<FileStat, String> {
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
     // fs::metadata follows symlinks, so the link check needs symlink_metadata.
-    let kind = if std::fs::symlink_metadata(&p)
+    let kind = if std::fs::symlink_metadata(p)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
     {

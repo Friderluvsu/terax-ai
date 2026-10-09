@@ -6,6 +6,7 @@ use std::time::UNIX_EPOCH;
 use ignore::WalkBuilder;
 use serde::Serialize;
 
+use crate::modules::remote::fs::dispatch;
 use crate::modules::workspace::{local_path, WorkspaceEnv};
 
 #[derive(Serialize)]
@@ -116,7 +117,7 @@ fn natural_cmp_inner(a: &str, b: &str) -> Ordering {
     }
 }
 
-fn natural_cmp(a: &str, b: &str) -> Ordering {
+pub(crate) fn natural_cmp(a: &str, b: &str) -> Ordering {
     let a_folded = (!a.is_ascii()).then(|| a.to_lowercase());
     let b_folded = (!b.is_ascii()).then(|| b.to_lowercase());
     natural_cmp_inner(
@@ -131,24 +132,40 @@ fn natural_cmp(a: &str, b: &str) -> Ordering {
 /// opts into the per-entry `gitignored` flag; off by default so non-explorer
 /// callers pay nothing.
 #[tauri::command]
-pub fn fs_read_dir(
+pub async fn fs_read_dir(
     path: String,
     show_hidden: bool,
     git_decorations: Option<bool>,
     workspace: Option<WorkspaceEnv>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<DirEntry>, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root = local_path(&path, &workspace)?;
-    let read = std::fs::read_dir(&root).map_err(|e| {
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        return dispatch::read_dir(&fs, &path, show_hidden).await;
+    }
+    read_dir_local(
+        &local_path(&path, &workspace)?,
+        show_hidden,
+        git_decorations,
+    )
+}
+
+pub fn read_dir_local(
+    root: &Path,
+    show_hidden: bool,
+    git_decorations: Option<bool>,
+) -> Result<Vec<DirEntry>, String> {
+    let read = std::fs::read_dir(root).map_err(|e| {
         log::debug!("fs_read_dir({}) failed: {e}", root.display());
         e.to_string()
     })?;
 
     // Gate on a real repo: outside one the walk is pointless and would probe
     // each child for a nested `.git`, which trips macOS folder-access prompts.
-    let git_decorations = git_decorations.unwrap_or(false) && in_git_repo(&root);
+    let git_decorations = git_decorations.unwrap_or(false) && in_git_repo(root);
     let git_visible = if git_decorations {
-        git_non_ignored_names(&root, show_hidden)
+        git_non_ignored_names(root, show_hidden)
     } else {
         HashSet::new()
     };
@@ -218,14 +235,22 @@ pub fn fs_read_dir(
 /// Symlinks to directories are included (matches shell `cd` semantics).
 /// Hidden entries are filtered by dot-prefix only.
 #[tauri::command]
-pub fn list_subdirs(
+pub async fn list_subdirs(
     path: String,
     show_hidden: bool,
     workspace: Option<WorkspaceEnv>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<String>, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root = local_path(&path, &workspace)?;
-    let read = std::fs::read_dir(&root).map_err(|e| {
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        return dispatch::list_subdirs(&fs, &path, show_hidden).await;
+    }
+    list_subdirs_local(&local_path(&path, &workspace)?, show_hidden)
+}
+
+pub fn list_subdirs_local(root: &Path, show_hidden: bool) -> Result<Vec<String>, String> {
+    let read = std::fs::read_dir(root).map_err(|e| {
         log::debug!("list_subdirs({}) read_dir failed: {e}", root.display());
         e.to_string()
     })?;
