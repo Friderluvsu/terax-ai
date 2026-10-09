@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   terminalDeleteSequence,
+  terminalForwardDeleteSequence,
+  terminalHomeEndSequence,
   terminalLineNavigationSequence,
   terminalReadlineSequence,
+  terminalUndoSequence,
   terminalWordNavigationSequence,
   type TerminalKeyEvent,
 } from "./keymap";
@@ -12,9 +15,126 @@ const evt = (partial: Partial<TerminalKeyEvent>): TerminalKeyEvent => ({
   altKey: false,
   ctrlKey: false,
   metaKey: false,
+  shiftKey: false,
   key: "",
   code: "",
   ...partial,
+});
+
+describe("terminalUndoSequence", () => {
+  it("maps Cmd+Z to readline undo on macOS", () => {
+    expect(
+      terminalUndoSequence(evt({ metaKey: true, key: "z", code: "KeyZ" }), {
+        isMac: true,
+      }),
+    ).toBe("\x1f");
+  });
+
+  it("does not map Cmd+Shift+Z (redo)", () => {
+    expect(
+      terminalUndoSequence(
+        evt({ metaKey: true, shiftKey: true, key: "Z", code: "KeyZ" }),
+        { isMac: true },
+      ),
+    ).toBeNull();
+  });
+
+  it("does not map Cmd+Z off macOS", () => {
+    expect(
+      terminalUndoSequence(evt({ metaKey: true, key: "z", code: "KeyZ" }), {
+        isMac: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not map plain z", () => {
+    expect(
+      terminalUndoSequence(evt({ key: "z", code: "KeyZ" }), { isMac: true }),
+    ).toBeNull();
+  });
+});
+
+describe("terminalForwardDeleteSequence", () => {
+  it("maps Option+Fn+Delete to kill-word-forward", () => {
+    expect(
+      terminalForwardDeleteSequence(
+        evt({ altKey: true, key: "Delete", code: "Delete" }),
+        { isMac: true },
+      ),
+    ).toBe("\x1bd");
+  });
+
+  it("maps Cmd+Fn+Delete to kill-to-line-end on macOS", () => {
+    expect(
+      terminalForwardDeleteSequence(
+        evt({ metaKey: true, key: "Delete", code: "Delete" }),
+        { isMac: true },
+      ),
+    ).toBe("\x0b");
+  });
+
+  it("does not map Cmd+Fn+Delete off macOS", () => {
+    expect(
+      terminalForwardDeleteSequence(
+        evt({ metaKey: true, key: "Delete", code: "Delete" }),
+        { isMac: false },
+      ),
+    ).toBeNull();
+  });
+
+  it("does not map Cmd+Option+Fn+Delete", () => {
+    expect(
+      terminalForwardDeleteSequence(
+        evt({ metaKey: true, altKey: true, key: "Delete", code: "Delete" }),
+        { isMac: true },
+      ),
+    ).toBeNull();
+  });
+
+  it("does not map plain Delete", () => {
+    expect(
+      terminalForwardDeleteSequence(evt({ key: "Delete", code: "Delete" }), {
+        isMac: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not map Backspace", () => {
+    expect(
+      terminalForwardDeleteSequence(
+        evt({ altKey: true, key: "Backspace", code: "Backspace" }),
+        { isMac: true },
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("terminalHomeEndSequence", () => {
+  it("maps Home to line-start", () => {
+    expect(terminalHomeEndSequence(evt({ key: "Home", code: "Home" }))).toBe(
+      "\x01",
+    );
+  });
+
+  it("maps End to line-end", () => {
+    expect(terminalHomeEndSequence(evt({ key: "End", code: "End" }))).toBe(
+      "\x05",
+    );
+  });
+
+  it("does not map Shift+Home", () => {
+    expect(
+      terminalHomeEndSequence(
+        evt({ shiftKey: true, key: "Home", code: "Home" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("does not map Ctrl+End", () => {
+    expect(
+      terminalHomeEndSequence(evt({ ctrlKey: true, key: "End", code: "End" })),
+    ).toBeNull();
+  });
 });
 
 describe("terminalWordNavigationSequence", () => {
@@ -74,7 +194,12 @@ describe("terminalLineNavigationSequence", () => {
   it("does not remap Cmd+Option+Arrow (selection-style combos pass through)", () => {
     expect(
       terminalLineNavigationSequence(
-        evt({ metaKey: true, altKey: true, key: "ArrowLeft", code: "ArrowLeft" }),
+        evt({
+          metaKey: true,
+          altKey: true,
+          key: "ArrowLeft",
+          code: "ArrowLeft",
+        }),
         { isMac: true },
       ),
     ).toBeNull();
@@ -129,10 +254,9 @@ describe("terminalDeleteSequence", () => {
 
   it("does not remap plain Backspace", () => {
     expect(
-      terminalDeleteSequence(
-        evt({ key: "Backspace", code: "Backspace" }),
-        { isMac: true },
-      ),
+      terminalDeleteSequence(evt({ key: "Backspace", code: "Backspace" }), {
+        isMac: true,
+      }),
     ).toBeNull();
   });
 });
@@ -154,6 +278,19 @@ describe("terminalReadlineSequence", () => {
       evt({ metaKey: true, key: "Backspace", code: "Backspace" }),
       "\x15",
     ],
+    ["undo", evt({ metaKey: true, key: "z", code: "KeyZ" }), "\x1f"],
+    [
+      "option forward deletion",
+      evt({ altKey: true, key: "Delete", code: "Delete" }),
+      "\x1bd",
+    ],
+    [
+      "cmd forward deletion",
+      evt({ metaKey: true, key: "Delete", code: "Delete" }),
+      "\x0b",
+    ],
+    ["home", evt({ key: "Home", code: "Home" }), "\x01"],
+    ["end", evt({ key: "End", code: "End" }), "\x05"],
   ] as const;
 
   it.each(remaps)(

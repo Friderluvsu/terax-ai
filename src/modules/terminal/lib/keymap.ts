@@ -1,11 +1,13 @@
 export type TerminalKeyEvent = Pick<
   KeyboardEvent,
-  "altKey" | "ctrlKey" | "metaKey" | "key" | "code"
+  "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "key" | "code"
 >;
 
 export type PlatformOpts = { isMac: boolean };
 
-export function terminalWordNavigationSequence(event: TerminalKeyEvent): string | null {
+export function terminalWordNavigationSequence(
+  event: TerminalKeyEvent,
+): string | null {
   if (!event.altKey || event.ctrlKey || event.metaKey) return null;
   if (event.key === "ArrowLeft" || event.code === "ArrowLeft") return "\x1bb";
   if (event.key === "ArrowRight" || event.code === "ArrowRight") return "\x1bf";
@@ -44,6 +46,44 @@ export function terminalDeleteSequence(
   return null;
 }
 
+/** Cmd+Z → readline undo (Ctrl+_). Cmd+Shift+Z (redo) has no readline equivalent. */
+export function terminalUndoSequence(
+  event: TerminalKeyEvent,
+  opts: PlatformOpts,
+): string | null {
+  if (!opts.isMac) return null;
+  if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey)
+    return null;
+  if (event.code === "KeyZ" || event.key.toLowerCase() === "z") return "\x1f";
+  return null;
+}
+
+/** Forward deletion (Fn+Delete):
+ *   Option+Fn+Delete → Esc d (kill-word-forward)
+ *   macOS Cmd+Fn+Delete → Ctrl+K (kill-to-line-end)
+ */
+export function terminalForwardDeleteSequence(
+  event: TerminalKeyEvent,
+  opts: PlatformOpts,
+): string | null {
+  if (event.key !== "Delete") return null;
+  if (event.ctrlKey || event.shiftKey) return null;
+  if (event.altKey && !event.metaKey) return "\x1bd";
+  if (opts.isMac && event.metaKey && !event.altKey) return "\x0b";
+  return null;
+}
+
+/** Unmodified Home/End → readline line-start (Ctrl+A) / line-end (Ctrl+E). */
+export function terminalHomeEndSequence(
+  event: TerminalKeyEvent,
+): string | null {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    return null;
+  if (event.key === "Home") return "\x01";
+  if (event.key === "End") return "\x05";
+  return null;
+}
+
 export function terminalReadlineSequence(
   event: TerminalKeyEvent,
   opts: PlatformOpts & { isAlternateScreen: boolean },
@@ -52,6 +92,9 @@ export function terminalReadlineSequence(
   return (
     terminalLineNavigationSequence(event, opts) ??
     terminalWordNavigationSequence(event) ??
-    terminalDeleteSequence(event, opts)
+    terminalDeleteSequence(event, opts) ??
+    terminalUndoSequence(event, opts) ??
+    terminalForwardDeleteSequence(event, opts) ??
+    terminalHomeEndSequence(event)
   );
 }
