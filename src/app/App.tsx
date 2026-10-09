@@ -116,6 +116,7 @@ import {
 import { FORK_UPDATER_DISABLED } from "@/lib/fork";
 import { UpdaterDialog } from "@/modules/updater";
 import {
+  currentWorkspaceScopeKey,
   useWorkspaceEnvStore,
   type WorkspaceEnv,
   workspaceScopeKey,
@@ -1231,10 +1232,11 @@ export default function App() {
   const handleTerminalCwd = useCallback(
     (leafId: number, cwd: string) => {
       setLeafCwd(leafId, cwd);
-      if (cwd && !authorizedCwds.current.has(cwd)) {
-        authorizedCwds.current.add(cwd);
+      const authKey = `${currentWorkspaceScopeKey()}\0${cwd}`;
+      if (cwd && !authorizedCwds.current.has(authKey)) {
+        authorizedCwds.current.add(authKey);
         native.workspaceAuthorize(cwd).catch(() => {
-          authorizedCwds.current.delete(cwd);
+          authorizedCwds.current.delete(authKey);
         });
       }
     },

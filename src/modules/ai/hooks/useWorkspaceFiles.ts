@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import {
+  currentWorkspaceEnv,
+  useWorkspaceEnvStore,
+  workspaceScopeKey,
+} from "@/modules/workspace";
 
 export type WorkspaceFilesState = {
   files: string[];
@@ -24,8 +28,13 @@ function isFresh(entry: CacheEntry): boolean {
   return Date.now() - entry.fetchedAt < CACHE_TTL_MS;
 }
 
-function fetchFiles(root: string): Promise<CacheEntry> {
-  const existing = inflight.get(root);
+function cacheKey(scope: string, root: string): string {
+  return `${scope}\0${root}`;
+}
+
+function fetchFiles(scope: string, root: string): Promise<CacheEntry> {
+  const key = cacheKey(scope, root);
+  const existing = inflight.get(key);
   if (existing) return existing;
   const promise = invoke<ListFilesResult>("fs_list_files", {
     root,
@@ -37,13 +46,13 @@ function fetchFiles(root: string): Promise<CacheEntry> {
         truncated: res.truncated,
         fetchedAt: Date.now(),
       };
-      cache.set(root, entry);
+      cache.set(key, entry);
       return entry;
     })
     .finally(() => {
-      inflight.delete(root);
+      inflight.delete(key);
     });
-  inflight.set(root, promise);
+  inflight.set(key, promise);
   return promise;
 }
 
@@ -51,11 +60,12 @@ export function useWorkspaceFiles(
   workspaceRoot: string | null,
   enabled: boolean,
 ): WorkspaceFilesState {
+  const scope = useWorkspaceEnvStore((s) => workspaceScopeKey(s.env));
   const [state, setState] = useState<WorkspaceFilesState>(() => {
     if (!workspaceRoot) {
       return { files: [], indexing: false, truncated: false };
     }
-    const cached = cache.get(workspaceRoot);
+    const cached = cache.get(cacheKey(scope, workspaceRoot));
     return cached
       ? { files: cached.files, truncated: cached.truncated, indexing: false }
       : { files: [], indexing: false, truncated: false };
@@ -67,7 +77,7 @@ export function useWorkspaceFiles(
       return;
     }
 
-    const cached = cache.get(workspaceRoot);
+    const cached = cache.get(cacheKey(scope, workspaceRoot));
     if (cached) {
       setState({
         files: cached.files,
@@ -81,7 +91,7 @@ export function useWorkspaceFiles(
 
     let cancelled = false;
     setState((s) => ({ ...s, indexing: true }));
-    fetchFiles(workspaceRoot)
+    fetchFiles(scope, workspaceRoot)
       .then((entry) => {
         if (cancelled) return;
         setState({
@@ -98,7 +108,7 @@ export function useWorkspaceFiles(
     return () => {
       cancelled = true;
     };
-  }, [workspaceRoot, enabled]);
+  }, [workspaceRoot, enabled, scope]);
 
   return state;
 }

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { setThemeId as persistThemeId } from "@/modules/settings/store";
 import type { Tab } from "@/modules/tabs";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import { LOCAL_WORKSPACE } from "@/modules/workspace";
 import { listCustomThemes, saveCustomTheme } from "./customThemes";
 import {
   isThemeFilePath,
@@ -37,7 +37,7 @@ export function useThemeFileEditing({ tabsRef, openFileTab }: Params) {
             try {
               const res = await invoke<{ kind: string; content?: string }>(
                 "fs_read_file",
-                { path: event.payload.path, workspace: currentWorkspaceEnv() },
+                { path: event.payload.path, workspace: LOCAL_WORKSPACE },
               );
               if (res.kind !== "text" || typeof res.content !== "string")
                 return;
