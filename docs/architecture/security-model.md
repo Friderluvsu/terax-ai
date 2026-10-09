@@ -13,6 +13,7 @@ The main trust boundaries are:
 3. **Network boundary** - AI HTTP proxy in `src-tauri/src/modules/net.rs` with SSRF and DNS-rebinding defenses.
 4. **Secret-storage boundary** - keys live in the OS keychain, never on disk or in `localStorage`.
 5. **Terminal escape-sequence boundary** - OSC sequences are parsed and acted on, but never blindly trusted to mutate state.
+6. **Preview protocol boundary** - `terax-preview://` (`src-tauri/src/modules/preview/`) serves files of one authorized root per token to a sandboxed frame.
 
 ## Secret-path deny-list
 
@@ -38,6 +39,16 @@ The comparison surface normalizes paths: backslashes to forward slashes, strips 
 - The registry is bootstrapped with the launch directory and the user's home directory (`workspace.rs:135`).
 
 This is the allow side of the file-system boundary. Any new feature that spawns a shell or mutates files outside the current workspace must interact with this registry.
+
+## HTML preview protocol
+
+`terax-preview://<token>/<path>` (Windows: `http://terax-preview.localhost/<token>/<path>`) serves a previewed page and its assets from Rust.
+
+- `preview_serve` accepts only Local workspaces, so a remote path is never read from the local disk. The root is the nearest project ancestor of the file, never `$HOME`, `/` or an ancestor of `$HOME`: those are authorized by prefix, and such a root would let any previewed page read the home directory. The root must be authorized in the workspace registry and must not be a secret path.
+- Tokens are 16 random bytes (32 hex characters, a valid host label). Unknown or released tokens get 404.
+- Every request is decoded and checked by pure functions (`preview/pure.rs`): `..` in any encoding, double encoding, NUL, control characters, backslashes, `:` and absolute paths are refused; the path is canonicalized and must stay under the root, so a symlink cannot point outside it. The Rust deny-list (`security/secret_paths.rs`) is applied to both the lexical and the canonical path, and the canonical path is the one opened.
+- Responses use a fixed MIME table with an `application/octet-stream` fallback, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Access-Control-Allow-Origin: *` and a page CSP that names the token origin explicitly and allows `https:` but not `http://localhost`.
+- Tauri treats custom-scheme origins as local for IPC. Preview frames must therefore stay sandboxed without `allow-same-origin`, must never receive Tauri scripts, and the main frame must never navigate to the scheme. The app CSP allows the scheme only in `frame-src`.
 
 ## AI tool approval flow
 
@@ -84,6 +95,7 @@ The agent detector (`src-tauri/src/modules/pty/agent_detect.rs`) is armed by `OS
 
 - The deny-list in `security.ts` applies on both read and write. Never bypass it.
 - New file-system-touching commands must respect the workspace authorization registry.
+- The preview protocol serves only canonical paths under an authorized, non-home root that pass the deny-list.
 - New network-facing commands must go through the `net.rs` proxy or reimplement the same classification and DNS pinning.
 - New plugin APIs must be added to `src-tauri/capabilities/default.json`.
 - Keys, tokens, and credentials stay in the keychain / Linux secrets file.
