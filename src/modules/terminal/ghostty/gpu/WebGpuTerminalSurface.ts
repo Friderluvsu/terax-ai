@@ -71,6 +71,14 @@ export type WebGpuTerminalSurfaceOptions = {
   readonly onFrame?: () => void;
   readonly onRequestFocus?: () => void;
   readonly onOpenLink?: (uri: string) => void;
+  readonly onCellClick?: (
+    cell: { readonly row: number; readonly column: number },
+    event: PointerEvent,
+  ) => void;
+  readonly shouldOpenLink?: (
+    event: MouseEvent,
+    cell: { readonly row: number; readonly column: number },
+  ) => boolean;
 };
 
 export type WebGpuTerminalSurfaceStats = {
@@ -220,6 +228,7 @@ export class WebGpuTerminalSurface
         if (this.applyingFit) return;
         this.runtime.schedule(this);
       },
+      onClick: (cell, event) => this.options.onCellClick?.(cell, event),
     });
     this.search = new GhosttySearchController(options.model, () => {
       if (this.applyingFit) return;
@@ -625,6 +634,12 @@ export class WebGpuTerminalSurface
     const activate = uri !== null && uri === this.mouseDownLink;
     this.mouseDownLink = null;
     if (!activate) return;
+    const cols = Math.max(1, this.options.model.cols);
+    const cell = {
+      row: Math.floor(this.hoveredCell / cols),
+      column: this.hoveredCell % cols,
+    };
+    if (this.options.shouldOpenLink?.(event, cell) === false) return;
     event.preventDefault();
     this.options.onOpenLink?.(uri);
   };

@@ -268,22 +268,35 @@ function dragFixture(realModel?: GhosttyTerminalModelApi) {
         tracked = value;
       },
       bufferLineAtViewportRow: (row: number) => row,
+      wordRangeAt: (point: { column: number }) => ({
+        start: point.column,
+        end: point.column,
+      }),
+      lineEndColumn: () => 79,
       scrollBy: vi.fn(() => false),
     } as unknown as GhosttyTerminalModelApi);
   const onChange = vi.fn();
+  const onClick = vi.fn();
   const controller = new TerminalSelectionController({
     model,
     target: target as unknown as HTMLElement,
     cellSize: () => ({ width: 10, height: 20 }),
     shouldIgnoreTarget: () => false,
     onChange,
+    onClick,
   });
   return {
     controller,
     model,
     onChange,
+    onClick,
     tracked: () => tracked,
-    pointer: (type: string, clientX: number, clientY = 10) =>
+    pointer: (
+      type: string,
+      clientX: number,
+      clientY = 10,
+      extra: Record<string, unknown> = {},
+    ) =>
       target.dispatchEvent(
         Object.assign(new Event(type, { cancelable: true }), {
           pointerId: 1,
@@ -293,10 +306,44 @@ function dragFixture(realModel?: GhosttyTerminalModelApi) {
           altKey: false,
           clientX,
           clientY,
+          ...extra,
         }),
       ),
   };
 }
+
+describe("terminal selection click", () => {
+  it("reports a plain click with its viewport cell", () => {
+    const fixture = dragFixture();
+    fixture.pointer("pointerdown", 25, 50);
+    fixture.pointer("pointerup", 25, 50);
+    expect(fixture.onClick).toHaveBeenCalledTimes(1);
+    expect(fixture.onClick.mock.calls[0][0]).toEqual({ row: 2, column: 2 });
+  });
+
+  it("does not report drags, multi clicks or shift clicks", () => {
+    const drag = dragFixture();
+    drag.pointer("pointerdown", 5);
+    drag.pointer("pointermove", 45);
+    drag.pointer("pointerup", 45);
+    expect(drag.onClick).not.toHaveBeenCalled();
+
+    const dbl = dragFixture();
+    dbl.pointer("pointerdown", 5, 10, { detail: 2 });
+    dbl.pointer("pointerup", 5);
+    expect(dbl.onClick).not.toHaveBeenCalled();
+
+    const triple = dragFixture();
+    triple.pointer("pointerdown", 5, 10, { detail: 3 });
+    triple.pointer("pointerup", 5);
+    expect(triple.onClick).not.toHaveBeenCalled();
+
+    const shift = dragFixture();
+    shift.pointer("pointerdown", 5, 10, { shiftKey: true });
+    shift.pointer("pointerup", 5, 10, { shiftKey: true });
+    expect(shift.onClick).not.toHaveBeenCalled();
+  });
+});
 
 describe("terminal selection geometry", () => {
   it("normalizes backward selections", () => {
