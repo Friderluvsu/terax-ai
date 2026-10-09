@@ -6,8 +6,7 @@ export function htmlPreviewUrl(
   relPath: string,
   platform: string,
 ): string {
-  const encoded = relPath
-    .replace(/\\/g, "/")
+  const encoded = (platform === "windows" ? toSlashes(relPath) : relPath)
     .split("/")
     .filter((segment) => segment !== "")
     .map(encodeURIComponent)
@@ -17,9 +16,18 @@ export function htmlPreviewUrl(
     : `${SCHEME}://${token}/${encoded}`;
 }
 
-export function relativeToRoot(path: string, root: string): string | null {
-  const p = path.replace(/\\/g, "/");
-  const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
+function toSlashes(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+export function relativeToRoot(
+  path: string,
+  root: string,
+  platform: string,
+): string | null {
+  const windows = platform === "windows";
+  const p = windows ? toSlashes(path) : path;
+  const r = (windows ? toSlashes(root) : root).replace(/\/+$/, "");
   if (!p.startsWith(`${r}/`)) return null;
   return p.slice(r.length + 1);
 }

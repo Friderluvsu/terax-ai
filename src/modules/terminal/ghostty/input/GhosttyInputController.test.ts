@@ -551,6 +551,82 @@ describe("GhosttyInputController Option handling", () => {
     controller.dispose();
   });
 
+  it.each([
+    ["left", "AltLeft", "\x1bu"],
+    ["both", "AltRight", "\x1bu"],
+    ["off", "AltLeft", ""],
+  ] as const)("Dead key Option+U in %s mode with %s", (mode, alt, expected) => {
+    const { input, controller, sent, press } = setup(mode);
+    press(alt);
+    const event = keyboardEvent({
+      key: "Dead",
+      code: "KeyU",
+      altKey: true,
+    });
+    input.dispatchEvent(event);
+    expect(sent()).toEqual(expected ? [expected] : []);
+    expect(event.defaultPrevented).toBe(expected !== "");
+    controller.dispose();
+  });
+
+  it("does not treat right Option dead keys as Meta in left mode", () => {
+    const { input, controller, sent, press } = setup("left");
+    press("AltRight");
+    input.dispatchEvent(
+      keyboardEvent({ key: "Dead", code: "KeyU", altKey: true }),
+    );
+    expect(sent()).toEqual([]);
+    controller.dispose();
+  });
+
+  it("resets the left Option state on blur", () => {
+    const { input, controller, sent, press } = setup("left");
+    press("AltLeft");
+    input.dispatchEvent(new Event("blur"));
+    press("AltRight");
+    input.dispatchEvent(keyboardEvent({ ...optionB }));
+    expect(sent()).toEqual(["∫"]);
+    controller.dispose();
+  });
+
+  it("maps Option+Backspace with keyCode 229 to ctrl-w", () => {
+    const { input, controller, sent } = setup("off");
+    input.dispatchEvent(
+      keyboardEvent({
+        key: "Backspace",
+        code: "Backspace",
+        altKey: true,
+        keyCode: 229,
+      }),
+    );
+    expect(sent()).toEqual(["\x17"]);
+    controller.dispose();
+  });
+
+  it("maps key Process with ArrowRight to word forward", () => {
+    const { input, controller, sent } = setup("off");
+    input.dispatchEvent(
+      keyboardEvent({
+        key: "Process",
+        code: "ArrowRight",
+        altKey: true,
+        keyCode: 229,
+      }),
+    );
+    expect(sent()).toEqual(["\x1bf"]);
+    controller.dispose();
+  });
+
+  it("sends an uppercase Meta letter for Shift+Option+B", () => {
+    const { input, controller, sent, press } = setup("both");
+    press("AltLeft");
+    input.dispatchEvent(
+      keyboardEvent({ key: "ı", code: "KeyB", altKey: true, shiftKey: true }),
+    );
+    expect(sent()).toEqual(["\x1bB"]);
+    controller.dispose();
+  });
+
   it("ignores Option keys during IME composition", () => {
     const { input, controller, sent } = setup("both");
     input.dispatchEvent(

@@ -1,8 +1,8 @@
 import { pathAtOrUnder } from "@/lib/paths";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
-export const RELOAD_DEBOUNCE_MS = 200;
+export const RELOAD_DEBOUNCE_MS = 400;
 
 export function shouldReloadFor(paths: readonly string[], root: string) {
   return paths.some((p) => pathAtOrUnder(p, root));
@@ -11,6 +11,7 @@ export function shouldReloadFor(paths: readonly string[], root: string) {
 export type ReloadScheduler = {
   notify: () => void;
   setVisible: (visible: boolean) => void;
+  discardPending: () => void;
   dispose: () => void;
 };
 
@@ -39,11 +40,22 @@ export function createReloadScheduler(
       visible = next;
       if (next && pending && !timer) timer = setTimeout(fire, delay);
     },
+    discardPending() {
+      pending = false;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
     dispose() {
       if (timer) clearTimeout(timer);
       timer = null;
     },
   };
+}
+
+export type ReloadAction = "reserve" | "refresh";
+
+export function reloadAction(error: string | null): ReloadAction {
+  return error ? "reserve" : "refresh";
 }
 
 export function useHtmlPreviewReload(
@@ -86,4 +98,6 @@ export function useHtmlPreviewReload(
   useEffect(() => {
     schedulerRef.current?.setVisible(visible);
   }, [visible]);
+
+  return useCallback(() => schedulerRef.current?.discardPending(), []);
 }

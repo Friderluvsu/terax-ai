@@ -64,6 +64,14 @@ export function cellClickDelta(
   });
 }
 
+export function shouldOpenLinkOnClick(
+  deps: CellClickDeps,
+  cell: CellClickPoint,
+  event: CellClickEvent,
+): boolean {
+  return cellClickDelta(deps, cell, event) === null;
+}
+
 export function handleCellClick(
   deps: CellClickDeps,
   cell: CellClickPoint,

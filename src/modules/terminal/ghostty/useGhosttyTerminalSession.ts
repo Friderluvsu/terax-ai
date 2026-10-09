@@ -42,8 +42,8 @@ void hostname()
 import { getWebGpuTerminalRuntime } from "./gpu/WebGpuTerminalRuntime";
 import { WebGpuTerminalSurface } from "./gpu/WebGpuTerminalSurface";
 import {
-  cellClickDelta,
   handleCellClick,
+  shouldOpenLinkOnClick,
   type CellClickDeps,
 } from "./input/cellClickCursor";
 import { GhosttyInputController } from "./input/GhosttyInputController";
@@ -742,7 +742,7 @@ async function initializeSessionGeneration(
       handleCellClick(cellClickDeps(session, model), cell, event);
     },
     shouldOpenLink: (event, cell) =>
-      cellClickDelta(cellClickDeps(session, model), cell, event) === null,
+      shouldOpenLinkOnClick(cellClickDeps(session, model), cell, event),
   };
   session.surfaceOptions = surfaceBaseOptions;
   let webGpuFallbackStarted = false;
