@@ -1,17 +1,15 @@
 import { notifyDocumentSaved } from "@/modules/lsp";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { currentWorkspaceEnv } from "@/modules/workspace";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  currentWorkspaceEnv,
+  fsFor,
+  type FsReadResult,
+} from "@/modules/workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { detectEol, type Eol, normalizeToLf, restoreEol } from "./eol";
 
-type ReadResult =
-  | { kind: "text"; content: string; size: number; mtime: number }
-  | { kind: "binary"; size: number }
-  | { kind: "toolarge"; size: number; limit: number };
-
-type FileStat = { size: number; mtime: number; kind: string };
+type ReadResult = FsReadResult;
 
 /// Mirrors FORCE_MAX_READ_BYTES in src-tauri fs/file.rs.
 export const FORCE_READ_LIMIT = 50 * 1024 * 1024;
@@ -60,12 +58,11 @@ export function useDocument({ path, onDirtyChange }: Options) {
 
   const writeToDisk = useCallback(async () => {
     const content = bufferRef.current;
-    const mtime = await invoke<number>("fs_write_file", {
+    const mtime = await fsFor(currentWorkspaceEnv()).writeFile(
       path,
-      content: restoreEol(content, eolRef.current),
-      workspace: currentWorkspaceEnv(),
-      source: "editor",
-    });
+      restoreEol(content, eolRef.current),
+      "editor",
+    );
     diskMtimeRef.current = mtime;
     savedRef.current = content;
     // Edits typed while the write was in flight must stay dirty.
@@ -78,10 +75,9 @@ export function useDocument({ path, onDirtyChange }: Options) {
   const saveNow = useCallback(async (): Promise<boolean> => {
     const known = diskMtimeRef.current;
     if (known !== null) {
-      const stat = await invoke<FileStat>("fs_stat", {
-        path,
-        workspace: currentWorkspaceEnv(),
-      }).catch(() => null);
+      const stat = await fsFor(currentWorkspaceEnv())
+        .stat(path)
+        .catch(() => null);
       if (stat && stat.mtime !== known) {
         const name = path.split(/[\\/]/).pop() ?? path;
         toast.warning("File changed on disk", {
@@ -128,12 +124,7 @@ export function useDocument({ path, onDirtyChange }: Options) {
   }, []);
 
   const readFromDisk = useCallback(
-    (force: boolean) =>
-      invoke<ReadResult>("fs_read_file", {
-        path,
-        workspace: currentWorkspaceEnv(),
-        force,
-      }),
+    (force: boolean) => fsFor(currentWorkspaceEnv()).readFile(path, { force }),
     [path],
   );
 

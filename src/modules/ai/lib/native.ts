@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
 
 export type ReadResult =
   | { kind: "text"; content: string; size: number }
@@ -143,34 +143,19 @@ export const native = {
       path,
       workspace: currentWorkspaceEnv(),
     }),
-  readFile: (path: string) =>
-    invoke<ReadResult>("fs_read_file", {
-      path,
-      workspace: currentWorkspaceEnv(),
-    }),
+  readFile: (path: string) => fsFor(currentWorkspaceEnv()).readFile(path),
   writeFile: (path: string, content: string) =>
-    invoke<void>("fs_write_file", {
-      path,
-      content,
-      workspace: currentWorkspaceEnv(),
-    }),
+    fsFor(currentWorkspaceEnv())
+      .writeFile(path, content)
+      .then(() => undefined),
   canonicalize: (path: string) =>
-    invoke<string>("fs_canonicalize", {
-      path,
-      workspace: currentWorkspaceEnv(),
-    }),
-  createFile: (path: string) =>
-    invoke<void>("fs_create_file", { path, workspace: currentWorkspaceEnv() }),
-  createDir: (path: string) =>
-    invoke<void>("fs_create_dir", { path, workspace: currentWorkspaceEnv() }),
+    fsFor(currentWorkspaceEnv()).canonicalize(path),
+  createFile: (path: string) => fsFor(currentWorkspaceEnv()).createFile(path),
+  createDir: (path: string) => fsFor(currentWorkspaceEnv()).createDir(path),
   // AI tooling never sees dot-prefixed entries regardless of the user's
   // explorer preference — keeps .git / .env / .ssh out of agent context.
   readDir: (path: string) =>
-    invoke<DirEntry[]>("fs_read_dir", {
-      path,
-      showHidden: false,
-      workspace: currentWorkspaceEnv(),
-    }),
+    fsFor(currentWorkspaceEnv()).readDir(path, { showHidden: false }),
   grep: (params: {
     pattern: string;
     root: string;
@@ -178,26 +163,20 @@ export const native = {
     caseInsensitive?: boolean;
     maxResults?: number;
   }) =>
-    invoke<GrepResponse>("fs_grep", {
+    fsFor(currentWorkspaceEnv()).grep({
       pattern: params.pattern,
       root: params.root,
       glob: params.glob ?? null,
       caseInsensitive: params.caseInsensitive ?? null,
       maxResults: params.maxResults ?? null,
-      workspace: currentWorkspaceEnv(),
     }),
   glob: (params: { pattern: string; root: string; maxResults?: number }) =>
-    invoke<GlobResponse>("fs_glob", {
+    fsFor(currentWorkspaceEnv()).glob({
       pattern: params.pattern,
       root: params.root,
       maxResults: params.maxResults ?? null,
-      workspace: currentWorkspaceEnv(),
     }),
-  runCommand: (
-    command: string,
-    cwd?: string | null,
-    timeoutSecs?: number,
-  ) =>
+  runCommand: (command: string, cwd?: string | null, timeoutSecs?: number) =>
     invoke<CommandOutput>("shell_run_command", {
       command,
       cwd: cwd ?? null,
@@ -332,7 +311,10 @@ export const native = {
       repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
-  gitLog: (repoRoot: string, options?: { limit?: number; beforeSha?: string }) =>
+  gitLog: (
+    repoRoot: string,
+    options?: { limit?: number; beforeSha?: string },
+  ) =>
     invoke<GitLogEntry[]>("git_log", {
       repoRoot,
       limit: options?.limit ?? null,

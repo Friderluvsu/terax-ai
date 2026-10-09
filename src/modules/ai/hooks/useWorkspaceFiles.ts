@@ -1,7 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import {
   currentWorkspaceEnv,
+  fsFor,
   useWorkspaceEnvStore,
   workspaceScopeKey,
 } from "@/modules/workspace";
@@ -11,8 +11,6 @@ export type WorkspaceFilesState = {
   indexing: boolean;
   truncated: boolean;
 };
-
-type ListFilesResult = { files: string[]; truncated: boolean };
 
 type CacheEntry = {
   files: string[];
@@ -36,10 +34,8 @@ function fetchFiles(scope: string, root: string): Promise<CacheEntry> {
   const key = cacheKey(scope, root);
   const existing = inflight.get(key);
   if (existing) return existing;
-  const promise = invoke<ListFilesResult>("fs_list_files", {
-    root,
-    workspace: currentWorkspaceEnv(),
-  })
+  const promise = fsFor(currentWorkspaceEnv())
+    .listFiles(root)
     .then((res) => {
       const entry: CacheEntry = {
         files: res.files,

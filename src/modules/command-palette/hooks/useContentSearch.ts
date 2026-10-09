@@ -1,5 +1,4 @@
-import { currentWorkspaceEnv } from "@/modules/workspace";
-import { invoke } from "@tauri-apps/api/core";
+import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
 import { useCallback } from "react";
 import { type AsyncQueryState, useAsyncQuery } from "./useAsyncQuery";
 
@@ -14,12 +13,6 @@ export type ContentHit = {
   text: string;
 };
 
-type GrepResponse = {
-  hits: ContentHit[];
-  truncated: boolean;
-  files_scanned: number;
-};
-
 export function useContentSearch(
   root: string | null,
   term: string,
@@ -28,11 +21,10 @@ export function useContentSearch(
   const run = useCallback(
     async (q: string): Promise<ContentHit[]> => {
       if (!root) return [];
-      const res = await invoke<GrepResponse>("fs_grep_interactive", {
+      const res = await fsFor(currentWorkspaceEnv()).grepInteractive({
         pattern: q,
         root,
         maxResults: LIMIT,
-        workspace: currentWorkspaceEnv(),
       });
       return res.hits;
     },

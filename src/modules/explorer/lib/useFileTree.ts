@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   useCallback,
   useEffect,
@@ -9,15 +8,12 @@ import {
 import { toast } from "sonner";
 import {
   currentWorkspaceEnv,
+  fsFor,
   useWorkspaceEnvStore,
   workspaceScopeKey,
 } from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import {
-  executeBatchMove,
-  excludeNestedSources,
-  type FsMoveResult,
-} from "./batchMove";
+import { executeBatchMove, excludeNestedSources } from "./batchMove";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
 
 export type DirEntry = {
@@ -27,8 +23,6 @@ export type DirEntry = {
   mtime: number;
   gitignored: boolean;
 };
-
-type DeleteBatchResult = { deleted: string[]; failed: number };
 
 type ChildrenState =
   | { status: "idle" }
@@ -188,11 +182,9 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       setNodes((s) => ({ ...s, [path]: { status: "loading" } }));
     }
     try {
-      const entries = await invoke<DirEntry[]>("fs_read_dir", {
-        path,
+      const entries = await fsFor(currentWorkspaceEnv()).readDir(path, {
         showHidden: showHiddenRef.current,
         gitDecorations: gitDecorationsRef.current,
-        workspace: currentWorkspaceEnv(),
       });
 
       const prev = nodesRef.current[path];
@@ -398,10 +390,9 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         return;
       }
       const path = joinPath(pendingCreate.parentPath, trimmed);
-      const cmd =
-        pendingCreate.kind === "dir" ? "fs_create_dir" : "fs_create_file";
+      const cmd = pendingCreate.kind === "dir" ? "createDir" : "createFile";
       try {
-        await invoke(cmd, { path, workspace: currentWorkspaceEnv() });
+        await fsFor(currentWorkspaceEnv())[cmd](path);
         await fetchChildren(pendingCreate.parentPath);
       } catch (e) {
         console.error(`${cmd} failed:`, e);
@@ -431,11 +422,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       }
       const to = joinPath(parent, trimmed);
       try {
-        await invoke("fs_rename", {
-          from: renaming,
-          to,
-          workspace,
-        });
+        await fsFor(workspace).rename(renaming, to);
         optionsRef.current?.onPathRenamed?.(renaming, to);
         if (scopeKeyRef.current === scopeKey) await fetchChildren(parent);
       } catch (e) {
@@ -450,7 +437,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const deletePath = useCallback(
     async (path: string) => {
       try {
-        await invoke("fs_delete", { path, workspace });
+        await fsFor(workspace).delete(path);
         optionsRef.current?.onPathsDeleted?.([path]);
         if (scopeKeyRef.current === scopeKey) {
           await fetchChildren(dirname(path));
@@ -468,9 +455,9 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       const topLevelPaths = excludeNestedSources(paths);
       const run = async () => {
         if (scopeKeyRef.current !== scopeKey) return;
-        const { deleted, failed } = await invoke<DeleteBatchResult>(
-          "fs_delete_batch",
-          { paths: topLevelPaths, root: rootPath ?? "", workspace },
+        const { deleted, failed } = await fsFor(workspace).deleteBatch(
+          topLevelPaths,
+          rootPath ?? "",
         );
         if (deleted.length > 0) {
           optionsRef.current?.onPathsDeleted?.(deleted);
@@ -520,12 +507,11 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         const parents = new Set<string>([toDir]);
         const outcome = await executeBatchMove(sources, toDir, {
           move: (item, expectedConflict) =>
-            invoke<FsMoveResult>("fs_move", {
+            fsFor(workspace).move({
               from: item.from,
               to: item.to,
               root: rootPath ?? "",
               expectedConflict,
-              workspace,
             }),
           resolveConflict: (item) => resolveMoveConflict(item.name),
           canReplace: (item) =>

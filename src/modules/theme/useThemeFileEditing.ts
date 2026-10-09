@@ -1,9 +1,8 @@
 import { type RefObject, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { setThemeId as persistThemeId } from "@/modules/settings/store";
 import type { Tab } from "@/modules/tabs";
-import { LOCAL_WORKSPACE } from "@/modules/workspace";
+import { fsFor, LOCAL_WORKSPACE } from "@/modules/workspace";
 import { listCustomThemes, saveCustomTheme } from "./customThemes";
 import {
   isThemeFilePath,
@@ -35,9 +34,8 @@ export function useThemeFileEditing({ tabsRef, openFileTab }: Params) {
           if (!isThemeFilePath(event.payload.path)) return;
           void (async () => {
             try {
-              const res = await invoke<{ kind: string; content?: string }>(
-                "fs_read_file",
-                { path: event.payload.path, workspace: LOCAL_WORKSPACE },
+              const res = await fsFor(LOCAL_WORKSPACE).readFile(
+                event.payload.path,
               );
               if (res.kind !== "text" || typeof res.content !== "string")
                 return;

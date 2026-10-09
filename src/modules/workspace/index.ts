@@ -1,4 +1,18 @@
 export {
+  fsFor,
+  type FsDeleteBatchResult,
+  type FsDirEntry,
+  type FsFileStat,
+  type FsGlobResult,
+  type FsGrepResult,
+  type FsListFilesResult,
+  type FsMoveResult,
+  type FsReadResult,
+  type FsSearchHit,
+  type FsSearchResult,
+  type WorkspaceFs,
+} from "./fs";
+export {
   assertNever,
   currentWorkspaceScopeKey,
   envCaps,

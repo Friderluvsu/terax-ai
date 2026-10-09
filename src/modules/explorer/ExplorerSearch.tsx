@@ -13,8 +13,11 @@ import {
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { invoke } from "@tauri-apps/api/core";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import {
+  currentWorkspaceEnv,
+  fsFor,
+  type FsSearchHit,
+} from "@/modules/workspace";
 import {
   forwardRef,
   useEffect,
@@ -28,17 +31,7 @@ import { copyToClipboard, revealInFinder } from "./lib/contextActions";
 import { COMPACT_CONTENT, COMPACT_ITEM } from "./lib/menuItemClass";
 import { cn } from "@/lib/utils";
 
-type SearchHit = {
-  path: string;
-  rel: string;
-  name: string;
-  is_dir: boolean;
-};
-
-type SearchResult = {
-  hits: SearchHit[];
-  truncated: boolean;
-};
+type SearchHit = FsSearchHit;
 
 const MIN_QUERY_LEN = 2;
 const DEBOUNCE_MS = 300;
@@ -114,12 +107,11 @@ export const ExplorerSearch = forwardRef<ExplorerSearchHandle, Props>(function E
     let alive = true;
     const handle = setTimeout(async () => {
       try {
-        const res = await invoke<SearchResult>("fs_search", {
+        const res = await fsFor(currentWorkspaceEnv()).search({
           root: rootPath,
           query: q,
           limit: 200,
           showHidden,
-          workspace: currentWorkspaceEnv(),
         });
         if (alive) {
           setResults(res.hits);
