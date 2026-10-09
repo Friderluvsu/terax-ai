@@ -1,3 +1,4 @@
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -8,6 +9,8 @@ import {
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { Switch } from "@/components/ui/switch";
 import {
+  clampNotifySeconds,
+  setNotifyLongCommandsSeconds,
   setTerminalClickToMoveCursor,
   setLaunchCommandFiles,
   setTerminalDefaultMode,
@@ -30,6 +33,8 @@ export function ForkSection() {
   const clickToMoveCursor = usePreferencesStore(
     (s) => s.terminalClickToMoveCursor,
   );
+
+  const notifySeconds = usePreferencesStore((s) => s.notifyLongCommandsSeconds);
 
   return (
     <div className="flex flex-col gap-6">
@@ -109,6 +114,23 @@ export function ForkSection() {
               <SelectItem value="both">Both Options</SelectItem>
             </SelectContent>
           </Select>
+        </SettingRow>
+        <SettingRow
+          title="Notify when a long command finishes"
+          description="Seconds a command must run before Terax notifies you on completion while the window or tab is in the background. 0 turns it off. The notification shows the command, exit code and duration, never its output."
+        >
+          <Input
+            type="number"
+            min={0}
+            step={5}
+            value={notifySeconds}
+            onChange={(e) =>
+              void setNotifyLongCommandsSeconds(
+                clampNotifySeconds(Number(e.target.value)),
+              )
+            }
+            className="h-8 w-24 text-[12px]"
+          />
         </SettingRow>
       </div>
     </div>

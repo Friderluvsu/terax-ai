@@ -24,6 +24,10 @@ export {
   whenSessionReady,
   writeToSession,
 } from "./lib/terminalSessionApi";
+export {
+  onLongCommand,
+  type LongCommandEvent,
+} from "./lib/longCommandEvents";
 export { isTerminalSurfaceTarget } from "./lib/terminalSurfaceTarget";
 export {
   type TerminalPathDropTarget,
