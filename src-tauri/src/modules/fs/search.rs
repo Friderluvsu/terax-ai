@@ -4,7 +4,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
 use super::to_canon;
-use crate::modules::workspace::{resolve_path, WorkspaceEnv};
+use crate::modules::workspace::{local_path, WorkspaceEnv};
 
 #[derive(Serialize, Clone)]
 pub struct SearchHit {
@@ -62,7 +62,7 @@ pub fn fs_search(
     let cap = limit.unwrap_or(200).min(1000);
     let show_hidden = show_hidden.unwrap_or(false);
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root_path = resolve_path(&root, &workspace);
+    let root_path = local_path(&root, &workspace)?;
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
@@ -170,7 +170,7 @@ pub fn fs_list_files(
     let depth = max_depth.unwrap_or(DEFAULT_DEPTH).clamp(1, HARD_DEPTH);
     let show_hidden = show_hidden.unwrap_or(false);
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root_path = resolve_path(&root, &workspace);
+    let root_path = local_path(&root, &workspace)?;
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
@@ -234,16 +234,19 @@ fn display_path(
     root_display: &str,
     workspace: &WorkspaceEnv,
 ) -> String {
-    if workspace.is_wsl() {
-        if let Ok(rel) = path.strip_prefix(root_path) {
-            let rel = to_canon(rel);
-            return if rel.is_empty() {
-                root_display.to_string()
-            } else if root_display.ends_with('/') {
-                format!("{root_display}{rel}")
-            } else {
-                format!("{root_display}/{rel}")
-            };
+    match workspace {
+        WorkspaceEnv::Local => {}
+        WorkspaceEnv::Wsl { .. } | WorkspaceEnv::Ssh { .. } => {
+            if let Ok(rel) = path.strip_prefix(root_path) {
+                let rel = to_canon(rel);
+                return if rel.is_empty() {
+                    root_display.to_string()
+                } else if root_display.ends_with('/') {
+                    format!("{root_display}{rel}")
+                } else {
+                    format!("{root_display}/{rel}")
+                };
+            }
         }
     }
     to_canon(path)

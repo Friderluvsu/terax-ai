@@ -77,10 +77,11 @@ pub fn authorize_spawn_cwd(
     cwd: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<Option<PathBuf>, String> {
+    require_host_fs(workspace)?;
     let Some(cwd) = cwd.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    let resolved = resolve_path(cwd, workspace);
+    let resolved = local_path(cwd, workspace)?;
     let canonical =
         std::fs::canonicalize(&resolved).map_err(|e| format!("cwd not accessible: {e}"))?;
     if !canonical.is_dir() {
@@ -102,10 +103,11 @@ pub fn authorize_user_spawn_cwd(
     cwd: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<Option<PathBuf>, String> {
+    require_host_fs(workspace)?;
     let Some(cwd) = cwd.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    let resolved = resolve_path(cwd, workspace);
+    let resolved = local_path(cwd, workspace)?;
     let canonical =
         std::fs::canonicalize(&resolved).map_err(|e| format!("cwd not accessible: {e}"))?;
     if !canonical.is_dir() {
@@ -146,7 +148,7 @@ pub async fn workspace_authorize(
     registry: tauri::State<'_, WorkspaceRegistry>,
 ) -> Result<String, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let resolved = resolve_path(&path, &workspace);
+    let resolved = local_path(&path, &workspace)?;
     let canonical = registry.authorize(&resolved).map_err(|e| e.to_string())?;
     Ok(crate::modules::fs::to_canon(&canonical))
 }
@@ -316,15 +318,23 @@ pub enum WorkspaceEnv {
     Wsl {
         distro: String,
     },
+    Ssh {
+        host: String,
+    },
 }
 
 impl WorkspaceEnv {
     pub fn from_option(workspace: Option<Self>) -> Self {
         workspace.unwrap_or_default()
     }
+}
 
-    pub fn is_wsl(&self) -> bool {
-        matches!(self, Self::Wsl { .. })
+pub const SSH_UNSUPPORTED: &str = "not supported in SSH workspace yet";
+
+pub fn require_host_fs(workspace: &WorkspaceEnv) -> Result<(), String> {
+    match workspace {
+        WorkspaceEnv::Local | WorkspaceEnv::Wsl { .. } => Ok(()),
+        WorkspaceEnv::Ssh { .. } => Err(SSH_UNSUPPORTED.to_string()),
     }
 }
 
@@ -335,17 +345,15 @@ pub struct WslDistro {
     pub running: bool,
 }
 
-#[cfg(windows)]
-pub fn resolve_path(path: &str, workspace: &WorkspaceEnv) -> PathBuf {
+pub fn local_path(path: &str, workspace: &WorkspaceEnv) -> Result<PathBuf, String> {
     match workspace {
-        WorkspaceEnv::Local => PathBuf::from(path),
-        WorkspaceEnv::Wsl { distro } => wsl_path_to_host(distro, path),
+        WorkspaceEnv::Local => Ok(PathBuf::from(path)),
+        #[cfg(windows)]
+        WorkspaceEnv::Wsl { distro } => Ok(wsl_path_to_host(distro, path)),
+        #[cfg(not(windows))]
+        WorkspaceEnv::Wsl { .. } => Ok(PathBuf::from(path)),
+        WorkspaceEnv::Ssh { .. } => Err(SSH_UNSUPPORTED.to_string()),
     }
-}
-
-#[cfg(not(windows))]
-pub fn resolve_path(path: &str, _workspace: &WorkspaceEnv) -> PathBuf {
-    PathBuf::from(path)
 }
 
 /// True for WSL distro names safe to splice into a UNC path. Real WSL distros
@@ -694,22 +702,22 @@ mod tests {
     }
 
     #[test]
-    fn resolve_path_keeps_local_paths_unchanged() {
+    fn local_path_keeps_local_paths_unchanged() {
         let path = r"C:\Users\vinicios\repo";
         assert_eq!(
-            resolve_path(path, &WorkspaceEnv::Local),
-            PathBuf::from(path)
+            local_path(path, &WorkspaceEnv::Local),
+            Ok(PathBuf::from(path))
         );
     }
 
     #[test]
-    fn resolve_path_maps_wsl_paths_to_host() {
+    fn local_path_maps_wsl_paths_to_host() {
         let workspace = WorkspaceEnv::Wsl {
             distro: "Ubuntu".into(),
         };
         assert_eq!(
-            resolve_path("/home/vinicios/repo", &workspace),
-            wsl_path_to_host("Ubuntu", "/home/vinicios/repo")
+            local_path("/home/vinicios/repo", &workspace),
+            Ok(wsl_path_to_host("Ubuntu", "/home/vinicios/repo"))
         );
     }
 

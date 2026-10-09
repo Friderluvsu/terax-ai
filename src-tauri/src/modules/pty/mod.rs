@@ -41,6 +41,15 @@ impl PtyState {
     }
 }
 
+// The control helper runs on this host only: a WSL guest or a remote shell
+// cannot reach it, so never hand them the credentials.
+pub(crate) fn control_env_allowed(workspace: &WorkspaceEnv) -> bool {
+    match workspace {
+        WorkspaceEnv::Local => true,
+        WorkspaceEnv::Wsl { .. } | WorkspaceEnv::Ssh { .. } => false,
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn pty_open(
@@ -61,12 +70,10 @@ pub async fn pty_open(
     let workspace = WorkspaceEnv::from_option(workspace);
     let blocks = blocks.unwrap_or(false);
     let cwd = user_spawn_cwd_or_home(&registry, cwd.as_deref(), &workspace);
-    // A Windows helper cannot execute inside WSL without explicit path and
-    // network translation. Do not inject credentials for a broken command.
-    let control_env = if workspace.is_wsl() {
-        None
-    } else {
+    let control_env = if control_env_allowed(&workspace) {
         pane_id.and_then(|pane_id| control.shell_env(pane_id))
+    } else {
+        None
     };
     let id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let session = tauri::async_runtime::spawn_blocking(move || {

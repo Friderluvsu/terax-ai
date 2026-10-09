@@ -14,7 +14,9 @@ use std::time::Duration;
 use serde::Serialize;
 use shared_child::SharedChild;
 
-use crate::modules::workspace::{authorize_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
+use crate::modules::workspace::{
+    authorize_spawn_cwd, WorkspaceEnv, WorkspaceRegistry, SSH_UNSUPPORTED,
+};
 #[cfg(windows)]
 use crate::modules::workspace::validate_wsl_distro_name;
 
@@ -91,8 +93,12 @@ fn run_blocking(
     dur: Duration,
 ) -> Result<CommandOutput, String> {
     let mut cmd = build_oneshot_command(&command, &workspace, cwd.as_deref())?;
-    if let (WorkspaceEnv::Local, Some(dir)) = (&workspace, cwd) {
-        cmd.current_dir(dir);
+    match (&workspace, cwd) {
+        (WorkspaceEnv::Local, Some(dir)) => {
+            cmd.current_dir(dir);
+        }
+        (WorkspaceEnv::Local, None) | (WorkspaceEnv::Wsl { .. }, _) => {}
+        (WorkspaceEnv::Ssh { .. }, _) => return Err(SSH_UNSUPPORTED.to_string()),
     }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -179,13 +185,13 @@ pub fn shell_session_open(
     authorize_spawn_cwd(&registry, cwd.as_deref(), &workspace)?;
     let initial = match cwd.as_deref().filter(|s| !s.is_empty()) {
         Some(c) => c.to_string(),
-        None => {
-            if let WorkspaceEnv::Wsl { distro } = &workspace {
-                crate::modules::workspace::wsl_home(distro.clone())?
-            } else {
+        None => match &workspace {
+            WorkspaceEnv::Local => {
                 crate::modules::fs::to_canon(dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
             }
-        }
+            WorkspaceEnv::Wsl { distro } => crate::modules::workspace::wsl_home(distro.clone())?,
+            WorkspaceEnv::Ssh { .. } => return Err(SSH_UNSUPPORTED.to_string()),
+        },
     };
     let session = Arc::new(ShellSession::new(initial, workspace));
     let id = state.next_session_id.fetch_add(1, Ordering::Relaxed);
@@ -283,19 +289,25 @@ pub fn shell_bg_list(state: tauri::State<ShellState>) -> Result<Vec<BackgroundPr
 
 pub(crate) fn build_oneshot_command(
     command: &str,
-    #[cfg_attr(not(windows), allow(unused_variables))] workspace: &WorkspaceEnv,
+    workspace: &WorkspaceEnv,
     #[cfg_attr(not(windows), allow(unused_variables))] cwd: Option<&str>,
 ) -> Result<Command, String> {
-    #[cfg(windows)]
-    if let WorkspaceEnv::Wsl { distro } = workspace {
-        validate_wsl_distro_name(distro)?;
-        let mut cmd = Command::new("wsl.exe");
-        cmd.arg("-d").arg(distro);
-        if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
-            cmd.arg("--cd").arg(cwd);
+    match workspace {
+        WorkspaceEnv::Local => {}
+        #[cfg(windows)]
+        WorkspaceEnv::Wsl { distro } => {
+            validate_wsl_distro_name(distro)?;
+            let mut cmd = Command::new("wsl.exe");
+            cmd.arg("-d").arg(distro);
+            if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
+                cmd.arg("--cd").arg(cwd);
+            }
+            cmd.arg("--exec").arg("sh").arg("-lc").arg(command);
+            return Ok(cmd);
         }
-        cmd.arg("--exec").arg("sh").arg("-lc").arg(command);
-        return Ok(cmd);
+        #[cfg(not(windows))]
+        WorkspaceEnv::Wsl { .. } => {}
+        WorkspaceEnv::Ssh { .. } => return Err(SSH_UNSUPPORTED.to_string()),
     }
     #[cfg(unix)]
     {

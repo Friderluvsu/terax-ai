@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::modules::git::errors::{GitError, Result};
-use crate::modules::workspace::{resolve_path, WorkspaceEnv, WorkspaceRegistry};
+use crate::modules::workspace::{local_path, WorkspaceEnv, WorkspaceRegistry};
 
 #[derive(Clone, Debug)]
 pub struct ResolvedGitDirectory {
@@ -31,17 +31,16 @@ pub fn canonical_dir(
     path: &str,
     workspace: &WorkspaceEnv,
 ) -> Result<ResolvedGitDirectory> {
-    let candidate = resolve_path(path, workspace);
+    let candidate = local_path(path, workspace).map_err(|e| GitError::command("workspace", e))?;
     if !candidate.is_dir() {
         return Err(GitError::NotADirectory(path.to_string()));
     }
     let local_path = registry
         .canonicalize_cached(&candidate)
         .map_err(GitError::Io)?;
-    let git_path = if workspace.is_wsl() {
-        normalize_git_path(path)
-    } else {
-        display_path(&local_path)
+    let git_path = match workspace {
+        WorkspaceEnv::Local => display_path(&local_path),
+        WorkspaceEnv::Wsl { .. } | WorkspaceEnv::Ssh { .. } => normalize_git_path(path),
     };
     Ok(ResolvedGitDirectory {
         workspace: workspace.clone(),

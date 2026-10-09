@@ -9,7 +9,7 @@ use serde::Serialize;
 use shared_child::SharedChild;
 
 use super::ringbuffer::BoundedRingBuffer;
-use crate::modules::workspace::{resolve_path, WorkspaceEnv};
+use crate::modules::workspace::{local_path, WorkspaceEnv, SSH_UNSUPPORTED};
 
 const RING_CAP: usize = 4 * 1024 * 1024;
 
@@ -99,14 +99,18 @@ pub fn spawn(
         return Err("empty command".into());
     }
     if let Some(ref dir) = cwd {
-        if !resolve_path(dir, &workspace).is_dir() {
+        if !local_path(dir, &workspace)?.is_dir() {
             return Err(format!("cwd is not a directory: {dir}"));
         }
     }
 
     let mut cmd = super::build_oneshot_command(&trimmed, &workspace, cwd.as_deref())?;
-    if let (WorkspaceEnv::Local, Some(ref dir)) = (&workspace, &cwd) {
-        cmd.current_dir(dir);
+    match (&workspace, &cwd) {
+        (WorkspaceEnv::Local, Some(dir)) => {
+            cmd.current_dir(dir);
+        }
+        (WorkspaceEnv::Local, None) | (WorkspaceEnv::Wsl { .. }, _) => {}
+        (WorkspaceEnv::Ssh { .. }, _) => return Err(SSH_UNSUPPORTED.to_string()),
     }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())

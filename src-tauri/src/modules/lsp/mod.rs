@@ -8,7 +8,9 @@ use std::sync::{Arc, RwLock};
 
 use tauri::ipc::{Channel, Response};
 
-use crate::modules::workspace::{authorize_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
+use crate::modules::workspace::{
+    authorize_spawn_cwd, WorkspaceEnv, WorkspaceRegistry, SSH_UNSUPPORTED,
+};
 use session::LspSession;
 
 pub struct LspState {
@@ -54,6 +56,14 @@ pub async fn lsp_detect(command: String) -> Option<String> {
     .flatten()
 }
 
+pub(crate) fn ensure_lsp_workspace(workspace: &WorkspaceEnv) -> Result<(), String> {
+    match workspace {
+        WorkspaceEnv::Local => Ok(()),
+        WorkspaceEnv::Wsl { .. } => Err("lsp: WSL workspaces are not supported yet".into()),
+        WorkspaceEnv::Ssh { .. } => Err(format!("lsp: {}", SSH_UNSUPPORTED)),
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn lsp_spawn(
@@ -70,9 +80,7 @@ pub async fn lsp_spawn(
     on_exit: Channel<session::LspExit>,
 ) -> Result<u32, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    if workspace.is_wsl() {
-        return Err("lsp: WSL workspaces are not supported yet".into());
-    }
+    ensure_lsp_workspace(&workspace)?;
     let root = authorize_spawn_cwd(&registry, Some(root.as_str()), &workspace)?
         .ok_or("lsp: workspace root is required")?;
 

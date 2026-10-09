@@ -1,4 +1,4 @@
-use crate::modules::workspace::{resolve_path, WorkspaceEnv, WorkspaceRegistry};
+use crate::modules::workspace::{local_path, WorkspaceEnv, WorkspaceRegistry};
 use serde::Serialize;
 use std::io;
 use std::path::Path;
@@ -36,12 +36,12 @@ fn is_conflict(error: &io::Error) -> bool {
     )
 }
 
-fn resolve_authorized_root(
+pub(crate) fn resolve_authorized_root(
     root: &str,
     workspace: &WorkspaceEnv,
     registry: &WorkspaceRegistry,
 ) -> Result<std::path::PathBuf, String> {
-    let resolved = resolve_path(root, workspace);
+    let resolved = local_path(root, workspace)?;
     let canonical = registry
         .canonicalize_cached(resolved)
         .map_err(|error| format!("workspace root is not accessible: {error}"))?;
@@ -221,7 +221,7 @@ fn remove_path(path: &Path) -> io::Result<()> {
 #[tauri::command]
 pub fn fs_create_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = resolve_path(&path, &workspace);
+    let p = local_path(&path, &workspace)?;
     if p.exists() {
         return Err(format!("already exists: {}", p.display()));
     }
@@ -237,7 +237,7 @@ pub fn fs_create_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<(
 #[tauri::command]
 pub fn fs_create_dir(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = resolve_path(&path, &workspace);
+    let p = local_path(&path, &workspace)?;
     if p.exists() {
         return Err(format!("already exists: {}", p.display()));
     }
@@ -251,8 +251,8 @@ pub fn fs_create_dir(path: String, workspace: Option<WorkspaceEnv>) -> Result<()
 #[tauri::command]
 pub fn fs_rename(from: String, to: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let from_p = resolve_path(&from, &workspace);
-    let to_p = resolve_path(&to, &workspace);
+    let from_p = local_path(&from, &workspace)?;
+    let to_p = local_path(&to, &workspace)?;
     if !from_p.exists() {
         return Err(format!("not found: {}", from_p.display()));
     }
@@ -284,15 +284,15 @@ pub fn fs_move(
     fs_move_impl(&from, &to, &root, expected_conflict.as_deref(), &workspace)
 }
 
-fn fs_move_impl(
+pub(crate) fn fs_move_impl(
     from: &str,
     to: &str,
     root: &Path,
     expected_conflict: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<FsMoveResult, String> {
-    let from_p = resolve_path(from, workspace);
-    let to_p = resolve_path(to, workspace);
+    let from_p = local_path(from, workspace)?;
+    let to_p = local_path(to, workspace)?;
     authorize_mutation_entry(&from_p, root)?;
     authorize_mutation_entry(&to_p, root)?;
     if from_p == to_p {
@@ -345,7 +345,7 @@ fn fs_move_impl(
 #[tauri::command]
 pub fn fs_delete(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = resolve_path(&path, &workspace);
+    let p = local_path(&path, &workspace)?;
     remove_path(&p).map_err(|e| {
         log::warn!("fs_delete({}) failed: {e}", p.display());
         e.to_string()
@@ -369,7 +369,7 @@ pub fn fs_delete_batch(
     fs_delete_batch_impl(paths, &root, &workspace)
 }
 
-fn fs_delete_batch_impl(
+pub(crate) fn fs_delete_batch_impl(
     paths: Vec<String>,
     root: &Path,
     workspace: &WorkspaceEnv,
@@ -377,14 +377,15 @@ fn fs_delete_batch_impl(
     let mut deleted = Vec::with_capacity(paths.len());
     let mut failed = 0;
     for path in paths {
-        let resolved = resolve_path(&path, workspace);
-        let result = authorize_mutation_entry(&resolved, root)
-            .and_then(|()| remove_path(&resolved).map_err(|error| error.to_string()));
+        let result = local_path(&path, workspace).and_then(|resolved| {
+            authorize_mutation_entry(&resolved, root)?;
+            remove_path(&resolved).map_err(|error| error.to_string())
+        });
         match result {
             Ok(()) => deleted.push(path),
             Err(error) => {
                 failed += 1;
-                log::warn!("fs_delete_batch({}) failed: {error}", resolved.display());
+                log::warn!("fs_delete_batch({path}) failed: {error}");
             }
         }
     }
@@ -414,7 +415,7 @@ pub fn fs_copy(
     workspace: Option<WorkspaceEnv>,
 ) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let dest = resolve_path(&dest_dir, &workspace);
+    let dest = local_path(&dest_dir, &workspace)?;
     for source in &sources {
         let src = std::path::PathBuf::from(source);
         let name = src
