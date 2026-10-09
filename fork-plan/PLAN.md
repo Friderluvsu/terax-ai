@@ -27,6 +27,7 @@
 | D7 | Русский интерфейс | Не делаем сейчас (это ~110 файлов, большой конфликт с апстримом). Делаем хоткеи, работающие на русской раскладке (E4-T02) | Полная локализация (набросок в E4-T10) |
 | D8 | Своя сборка | Dev: `app.crynta.terax.dev` / "Terax Dev". Релиз: `dev.terax.fork` / "Terax Fork". Апдейтер в форке выключен. Keychain общий с установленным Terax (одни и те же API-ключи) | Отдельный keychain-сервис |
 | D9 | Cmd+G в редакторе | Внутри вкладки редактора Cmd+G отдаётся CodeMirror (найти следующее); вне редактора остаётся Source Control | Оставить как есть |
+| D11 | `.command` из Finder | Запускать в новой терминальной вкладке в папке скрипта; карантин спрашивает подтверждение; права молча не меняются. Клик в проводнике Terax по-прежнему открывает редактор, запуск через "Run in Terminal" и кнопку Run | Всегда открывать в редакторе |
 | D10 | Где хранить план | Закоммитить `fork-plan/` в ветку `fork/main`: worktree-агенты не видят неотслеживаемых файлов | Ссылаться по абсолютному пути |
 
 ---
@@ -116,7 +117,7 @@ critical/major/minor и конкретным исправлением. Не пе
 | Волна | Цель | Задачи (порядок слияния) | Параллельно | Выход из волны |
 |---|---|---|---|---|
 | W0 Фундамент | Безопасная песочница для форка, агенты видят TERAX.md | E0-T01 (главный), E0-T02, E0-T03, E0-T06, E0-T05, E0-T04 (опц.) | T02 и T06 параллельно; T03 Rust в слоте A; T05 после T03 | `pnpm fork:dev` стартует как "Terax Dev"; `scripts/fork/release.sh` собирает "Terax Fork.app"; апдейтер не активен |
-| W1 Быстрая польза | Видимые улучшения за день | E4-T01, E1-T01, E1-T02, E2-T01, E3-T06 | Все 5; Rust: E2-T01 слот A, E3-T06 слот B; E1-T02 гоняет только FE, Rust-тест скриптов запускает главный агент при слиянии | Ручные проверки W1 (раздел 8) |
+| W1 Быстрая польза | Видимые улучшения за день | Партия 1: E4-T01, E1-T02, E2-T01 (готово). Партия 2: E1-T01, E3-T06, E1-T10 | Все 5; Rust: E2-T01 слот A, E3-T06 слот B; E1-T02 гоняет только FE, Rust-тест скриптов запускает главный агент при слиянии | Ручные проверки W1 (раздел 8) |
 | W2 Три трека | Клик в Classic, HTML-превью, подготовка к SSH | Трек A: E1-T04 и E1-T05 параллельно, затем E1-T06. Трек C: E3-T01, затем E3-T02. Трек B: E2-T02, затем E2-T03, затем E2-T04. E3-T01 вливается раньше E2-T02 (обе правят `fs/watch.rs`; E2-T02 при слиянии переводится на `local_path`) | Треки параллельно; Rust: E3-T01 слот A, E2-T02 слот B | Клик работает в zsh/bash/fish; HTML открывается в Split и обновляется при сохранении; гейты зелёные |
 | W3 Доводка | Хоткеи Option, прокрутка в less, Markdown, превью SVG, провайдер ФС | E1-T03, E1-T07, E2-T05, E2-T06, E3-T04, E3-T05, затем E3-T03, E4-T02 (если ручная проверка раскладки показала проблему) | E1 и E2 параллельно с E3-T04; E3-T03 после E3-T04 | Ручные проверки W3 |
 | W4 SSH-терминал | Удалённый терминал с Blocks и кликом | E3-T07, затем E3-T08 и E3-T09, затем E3-T08b | T08 и T09 параллельно (слоты A и B) | "SSH: <alias> (remote shell)" для OrbStack-машины и `oracle` открывает SSH-space; cwd отслеживается, Blocks и клик работают на сервере |
@@ -366,6 +367,60 @@ critical/major/minor и конкретным исправлением. Не пе
 - Файлы: `pty/scripts/zshrc.zsh:62-65`, `pty/scripts/bashrc.bash:63-66`, `ghostty/shellBlockCompatibility.test.ts:29`, проверка `core/PromptPresentationGate.ts`.
 - Зачем: в zsh и bash метка B сейчас стоит в начале PS1, поэтому точное начало ввода неизвестно. Так сделано по спецификации, как у fish и pwsh.
 - Риск: окно подавления рендера между A и B станет длиннее (сторожевой таймер 1 с). Проверить с p10k и starship, если ими пользуешься.
+
+#### E1-T10 · Запуск скриптов в терминале (.command из Finder, Run в Terax)
+- Модель: Sonnet · Ревью: Opus (запуск файлов, пришедших от ОС) · M · Зависит: E0-T06
+- Зачем: сейчас любой файл, открытый через Finder ("Открыть в программе"), попадает в редактор (`App.tsx:666-686`, `handleOpenFile` / `openLaunchFiles`). `.command` в ассоциациях нет вовсе, а `sh`, `bash`, `zsh` зарегистрированы как Editor (`tauri.conf.json`, `bundle.fileAssociations`).
+- Файлы:
+  - `src-tauri/tauri.conf.json` (`bundle.fileAssociations`);
+  - новый `src-tauri/src/modules/scripts.rs` и `src-tauri/src/modules/mod.rs`, регистрация в `lib.rs` (`generate_handler!`);
+  - `src/modules/settings/store.ts` и `src/settings/sections/ForkSection.tsx`;
+  - новый `src/modules/terminal/lib/runScript.ts` с тестом;
+  - `src/app/App.tsx` (`openLaunchFiles` около 680-686, шаблон запуска `whenSessionReady` + `writeToSession` в 600-636);
+  - `src/modules/explorer/FileExplorer.tsx` (контекстное меню 795-925);
+  - `src/modules/editor/EditorStack.tsx` (кнопка Run поверх редактора, по образцу `MarkdownViewToggle` на 105-113).
+- Шаги:
+  1. **Ассоциации.** Новая запись `fileAssociations` для `command` и `tool` с `role: "Shell"` и `contentTypes: ["com.apple.terminal.shell-script"]`. Поддержка полей проверена в `node_modules/@tauri-apps/cli/config.schema.json`. Существующую запись не менять. Сделать Terax обработчиком по умолчанию пользователь может сам через Finder "Свойства".
+  2. **Rust**, команда `script_launch_info(path)`:
+     - канонизирует путь и требует обычный файл;
+     - возвращает `{executable, quarantined}`;
+     - `executable` по mode-битам на unix;
+     - `quarantined` есть ли xattr `com.apple.quarantine` (на macOS через `libc::getxattr`, на других ОС `false`).
+
+     Команда `script_make_executable(path)`:
+     - добавляет `x` туда, где есть `r` (`u`, `g`, `o`);
+     - только если родительский каталог авторизован (`WorkspaceRegistry::is_authorized`; каталог launch-файла уже авторизуется в `lib.rs` около 378).
+
+     Чистые хелперы и тесты на временных файлах (mode, xattr на macOS через `xattr -w` в тесте, неавторизованный каталог).
+  3. **Настройка** `launchCommandFiles: "run" | "edit"` = `"run"`: валидация как у соседних ключей, строка в ForkSection.
+  4. **Чистый модуль `runScript.ts`:**
+     - `isRunnableScriptPath(path)`: расширения `command`, `tool`, `sh`, `bash`, `zsh`, `fish`;
+     - `isLaunchRunnable(path)`: только `command` и `tool`;
+     - `hasShebang(text)`;
+     - `buildRunInput(path)`: `quoteShellPath(path)` из `terminal/lib/quoteShellPath.ts` плюс `\r`.
+
+     Тесты: пробелы, кавычки, кириллица, `$`, переводы строк в имени.
+  5. **Запуск** `runScriptInNewTab(path)`:
+     - запросить `script_launch_info`;
+     - при карантине модальное подтверждение "Файл скачан из интернета. Запустить?" (существующий AlertDialog);
+     - если файл не исполняемый: toast с действиями "Сделать исполняемым и запустить" (`script_make_executable`) и "Открыть в редакторе"; молча права не менять;
+     - затем новая классическая терминальная вкладка с cwd = каталог файла и заголовком = имя файла; после `whenSessionReady` ввести `buildRunInput(path)`. Оболочка остаётся открытой после завершения скрипта.
+  6. **Finder.** В `openLaunchFiles`: если `isLaunchRunnable(path)` и настройка `run`, то `runScriptInNewTab`, иначе как сейчас.
+  7. **Проводник.** Пункт "Run in Terminal" для `isRunnableScriptPath`. Одиночный клик по-прежнему открывает редактор.
+  8. **Редактор.** Кнопка Run для `isRunnableScriptPath` или файла с шебангом:
+     - неактивна с подсказкой "Save to run", пока есть несохранённые изменения;
+     - только для локального окружения (в SSH-пространстве скрыта до отдельной задачи).
+- Готово:
+  - тесты чистых функций и Rust-команд;
+  - eager-budget не растёт: модальное окно и логика запуска грузятся лениво или уже в eager-графе;
+  - `.command` из Finder в Terax Fork запускается в новой вкладке.
+- Проверка: FE, RS, SIZE.
+- Руками:
+  - "Открыть в программе > Terax Fork" для `.command`: вкладка в папке скрипта, вывод виден;
+  - скачанный файл с карантином спрашивает подтверждение;
+  - неисполняемый файл предлагает `chmod`;
+  - "Run in Terminal" в проводнике;
+  - кнопка Run в редакторе.
 
 #### E1-T09 · (отложено) Точное начало ввода из Zig-ядра
 - Модель: Opus · Ревью: Opus · L · Зависит: E1-T06
@@ -1044,6 +1099,7 @@ critical/major/minor и конкретным исправлением. Не пе
 | E1-T07 | Колесо в less/man | Sonnet | нет | S | W3 |
 | E1-T08 | OSC 133 B в конец PS1 (опц.) | Sonnet | Sonnet | S-M | W7 |
 | E1-T09 | Zig: точное начало ввода (отложено) | Opus | Opus | L | W7 |
+| E1-T10 | Запуск скриптов (.command) в терминале | Sonnet | Opus | M | W1 |
 | E2-T01 | Rust deny-list | Sonnet | Opus | S-M | W1 |
 | E2-T02 | Протокол terax-preview | Opus | Opus | L | W2 |
 | E2-T03 | Фрейм превью и перезагрузка | Sonnet | Opus | M | W2 |
