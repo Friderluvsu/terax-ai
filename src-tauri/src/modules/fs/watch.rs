@@ -389,6 +389,7 @@ mod tests {
             &WorkspaceEnv::Local,
             vec![dist.display().to_string()]
         )
+        .expect("local workspace")
         .is_empty());
     }
 }

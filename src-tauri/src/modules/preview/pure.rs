@@ -183,11 +183,23 @@ pub fn preview_url(token: &str, encoded_rel: &str) -> String {
 /// on: WebKit's matching of `'self'` for an opaque-origin sandboxed document on
 /// a custom scheme is unverified.
 pub fn page_csp(token: &str) -> String {
-    let own = format!("{SCHEME}://{token} http://{WINDOWS_HOST}");
+    let own = preview_origin(token);
     format!(
         "default-src {own} 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; \
-         connect-src {own} 'self' data: blob: https:"
+         connect-src {own} 'self' data: blob: https:; \
+         form-action {own} 'self' https:; \
+         base-uri {own} 'self'"
     )
+}
+
+/// The `*.localhost` Windows host resolves to loopback elsewhere, so it is only
+/// named on Windows, where it is the real preview origin.
+fn preview_origin(token: &str) -> String {
+    if cfg!(windows) {
+        format!("http://{WINDOWS_HOST}")
+    } else {
+        format!("{SCHEME}://{token}")
+    }
 }
 
 /// One `bytes=` range. Malformed or multi-range headers are ignored (full body).
@@ -398,9 +410,14 @@ mod tests {
     #[test]
     fn csp_names_the_token_origin_explicitly() {
         let csp = page_csp(TOK);
-        assert!(csp.contains(&format!("default-src terax-preview://{TOK} ")));
-        assert!(csp.contains(&format!("connect-src terax-preview://{TOK} ")));
+        let own = preview_origin(TOK);
+        assert!(csp.contains(&format!("default-src {own} ")));
+        assert!(csp.contains(&format!("connect-src {own} ")));
         assert!(!csp.contains("http:;") && !csp.contains("http: "));
+        assert!(csp.contains(&format!("form-action {own} ")));
+        if !cfg!(windows) {
+            assert!(!csp.contains(WINDOWS_HOST));
+        }
     }
 
     #[test]
