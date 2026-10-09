@@ -1,4 +1,4 @@
-import { cn, isHtmlPath, isMarkdownPath } from "@/lib/utils";
+import { cn, isHtmlPath, isMarkdownPath, isSvgPath } from "@/lib/utils";
 import { DocumentViewToggle, MarkdownViewToggle } from "@/modules/markdown";
 import type { DocView, EditorTab, Tab } from "@/modules/tabs";
 import { envCaps, useWorkspaceEnvStore } from "@/modules/workspace";
@@ -104,7 +104,8 @@ export function EditorStack({
     <div className="relative h-full w-full">
       {editors.map((t) => {
         const visible = t.id === activeId;
-        const htmlTab = htmlPreview && isHtmlPath(t.path);
+        const htmlTab =
+          htmlPreview && (isHtmlPath(t.path) || isSvgPath(t.path));
         const pane = (
           <EditorPane
             ref={getRefCallback(t.id)}

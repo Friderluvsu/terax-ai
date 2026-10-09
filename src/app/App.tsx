@@ -117,6 +117,7 @@ import { FORK_UPDATER_DISABLED } from "@/lib/fork";
 import { UpdaterDialog } from "@/modules/updater";
 import {
   currentWorkspaceScopeKey,
+  envCaps,
   useWorkspaceEnvStore,
   type WorkspaceEnv,
   workspaceScopeKey,
@@ -719,6 +720,20 @@ export default function App() {
       else openFileTab(path, pin ?? false);
     },
     [openFileTab, newMarkdownTab],
+  );
+
+  const handleOpenPreview = useCallback(
+    (path: string) => {
+      if (isMarkdownPath(path)) {
+        newMarkdownTab(path);
+        return;
+      }
+      const id = openFileTab(path, true);
+      if (id != null && envCaps(workspaceEnv).htmlPreview) {
+        setDocView(id, "preview");
+      }
+    },
+    [openFileTab, newMarkdownTab, setDocView, workspaceEnv],
   );
 
   const [quarantinePath, setQuarantinePath] = useState<string | null>(null);
@@ -1615,6 +1630,7 @@ export default function App() {
                           }
                           activeFilePath={explorerActiveFilePath}
                           onOpenFile={handleOpenFile}
+                          onOpenPreview={handleOpenPreview}
                           onPathRenamed={handleExplorerPathRenamed}
                           onPathsDeleted={handlePathsDeleted}
                           canReplacePath={canReplaceExplorerPath}
