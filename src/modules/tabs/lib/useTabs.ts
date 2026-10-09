@@ -809,7 +809,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     [newAgentGroupTab],
   );
 
-  const newPrivateTab = useCallback((cwd?: string) => {
+  const newPrivateTab = useCallback((cwd?: string, title = "private") => {
     const tabId = nextIdRef.current++;
     const leafId = nextIdRef.current++;
     setTabs((t) => [
@@ -818,7 +818,8 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         id: tabId,
         kind: "terminal",
         spaceId: activeSpaceIdRef.current,
-        title: "private",
+        title,
+        ...(title === "private" ? {} : { customTitle: title }),
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,

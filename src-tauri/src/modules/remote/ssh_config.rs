@@ -1,10 +1,13 @@
 use super::target::validate_alias;
 use globset::Glob;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const MAX_INCLUDE_DEPTH: usize = 16;
+const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_HOSTS: usize = 2000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -20,7 +23,7 @@ struct State<'a> {
     ssh_dir: &'a Path,
     hosts: Vec<SshHost>,
     current: Vec<usize>,
-    active: Vec<PathBuf>,
+    visited: HashSet<PathBuf>,
 }
 
 pub fn list_user_hosts() -> Vec<SshHost> {
@@ -37,7 +40,7 @@ pub fn list_hosts(config: &Path, home: &Path, ssh_dir: &Path) -> Vec<SshHost> {
         ssh_dir,
         hosts: Vec::new(),
         current: Vec::new(),
-        active: Vec::new(),
+        visited: HashSet::new(),
     };
     parse_file(config, 0, &mut st);
     st.hosts
@@ -91,14 +94,13 @@ fn parse_file(path: &Path, depth: usize, st: &mut State) {
     if depth > MAX_INCLUDE_DEPTH {
         return;
     }
-    let canon = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if st.active.contains(&canon) {
-        return;
-    }
-    let Ok(text) = fs::read_to_string(path) else {
+    let Some(text) = read_config(path) else {
         return;
     };
-    st.active.push(canon);
+    let canon = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !st.visited.insert(canon) {
+        return;
+    }
     for line in text.lines() {
         let Some((kw, args)) = split_line(line) else {
             continue;
@@ -139,16 +141,28 @@ fn parse_file(path: &Path, depth: usize, st: &mut State) {
                 }
             }
             "include" => {
+                let saved = st.current.clone();
                 for pat in args {
                     for file in expand_include(&pat, st) {
                         parse_file(&file, depth + 1, st);
                     }
                 }
+                st.current = saved;
             }
             _ => {}
         }
     }
-    st.active.pop();
+}
+
+fn read_config(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_CONFIG_BYTES {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(MAX_CONFIG_BYTES).read_to_string(&mut text).ok()?;
+    Some(text)
 }
 
 fn expand_include(pattern: &str, st: &State) -> Vec<PathBuf> {
@@ -176,9 +190,13 @@ fn expand_include(pattern: &str, st: &State) -> Vec<PathBuf> {
             let Ok(rd) = fs::read_dir(p) else {
                 continue;
             };
+            let allow_dot = name.starts_with('.');
             let mut found: Vec<PathBuf> = rd
                 .flatten()
-                .filter(|e| matcher.is_match(e.file_name().to_string_lossy().as_ref()))
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    (allow_dot || !n.starts_with('.')) && matcher.is_match(&n)
+                })
                 .map(|e| e.path())
                 .collect();
             found.sort();
@@ -400,5 +418,60 @@ mod tests {
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].user.as_deref(), Some("first"));
         assert_eq!(h[0].hostname.as_deref(), Some("h"));
+    }
+
+    #[test]
+    fn include_restores_host_block() {
+        let f = fx();
+        write(
+            &f.ssh.join("inc.conf"),
+            "Host b
+  HostName bh
+",
+        );
+        write(
+            &f.ssh.join("config"),
+            "Host a
+  Include inc.conf
+  User u
+",
+        );
+        let h = run(&f);
+        assert_eq!(aliases(&h), vec!["a", "b"]);
+        assert_eq!(h[0].user.as_deref(), Some("u"));
+        assert_eq!(h[1].user, None);
+    }
+
+    #[test]
+    fn include_glob_skips_dotfiles() {
+        let f = fx();
+        write(&f.ssh.join("conf.d/ok.conf"), "Host ok\n");
+        write(&f.ssh.join("conf.d/.foo.conf.swp"), "Host swp\n");
+        write(&f.ssh.join("config"), "Include conf.d/*\n");
+        assert_eq!(aliases(&run(&f)), vec!["ok"]);
+    }
+
+    #[test]
+    fn oversized_or_non_regular_config_ignored() {
+        let f = fx();
+        let big = format!("Host big\n{}", "#".repeat(MAX_CONFIG_BYTES as usize));
+        write(&f.ssh.join("config"), &big);
+        assert!(run(&f).is_empty());
+        let g = fx();
+        fs::create_dir_all(g.ssh.join("config")).unwrap();
+        assert!(run(&g).is_empty());
+    }
+
+    #[test]
+    fn file_included_twice_parsed_once() {
+        let f = fx();
+        write(&f.ssh.join("x.conf"), "Host x\n  User first\n");
+        write(
+            &f.ssh.join("config"),
+            "Include x.conf\nHost y\nInclude x.conf\n  User late\n",
+        );
+        let h = run(&f);
+        assert_eq!(aliases(&h), vec!["x", "y"]);
+        assert_eq!(h[1].user.as_deref(), Some("late"));
     }
 }
