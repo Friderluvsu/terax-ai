@@ -538,7 +538,10 @@ async fn remove_tree<F: RemoteFs>(fs: &F, path: &str, limit: usize) -> Result<()
     while let Some(dir) = pending.pop() {
         for e in fs.read_dir(&dir).await? {
             let child = join(&dir, &e.name);
-            if e.meta.kind == RemoteKind::Dir {
+            // readdir attrs are only a hint: confirm the kind without following links.
+            let is_dir =
+                e.meta.kind == RemoteKind::Dir && fs.lstat(&child).await?.kind == RemoteKind::Dir;
+            if is_dir {
                 pending.push(child.clone());
                 dirs.push(child);
             } else {
@@ -605,6 +608,38 @@ fn utf8_name(path: &Path) -> Result<&str, String> {
         .ok_or_else(|| format!("invalid source: {}", path.display()))
 }
 
+enum Local {
+    Dir(Vec<PathBuf>),
+    File { data: Vec<u8>, mode: Option<u32> },
+}
+
+async fn read_local(src: PathBuf) -> Result<Local, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            let mut children = Vec::new();
+            for child in std::fs::read_dir(&src).map_err(|e| e.to_string())? {
+                children.push(child.map_err(|e| e.to_string())?.path());
+            }
+            return Ok(Local::Dir(children));
+        }
+        if meta.len() > MAX_UPLOAD_BYTES {
+            return Err(format!(
+                "{}: larger than {} MB",
+                src.display(),
+                MAX_UPLOAD_BYTES >> 20
+            ));
+        }
+        let data = std::fs::read(&src).map_err(|e| e.to_string())?;
+        Ok(Local::File {
+            data,
+            mode: local_mode(&meta),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Uploads local files and folders into `dest_dir`; never overwrites.
 pub async fn upload<F: RemoteFs>(
     fs: &F,
@@ -629,24 +664,15 @@ pub async fn upload<F: RemoteFs>(
             budget = budget
                 .checked_sub(1)
                 .ok_or_else(|| format!("more than {MAX_TREE_ENTRIES} entries to upload"))?;
-            let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
-            if meta.is_dir() {
-                fs.mkdir(&target).await?;
-                for child in std::fs::read_dir(&src).map_err(|e| e.to_string())? {
-                    let child = child.map_err(|e| e.to_string())?.path();
-                    let name = join(&target, utf8_name(&child)?);
-                    pending.push((child, name));
+            match read_local(src).await? {
+                Local::Dir(children) => {
+                    fs.mkdir(&target).await?;
+                    for child in children {
+                        let name = join(&target, utf8_name(&child)?);
+                        pending.push((child, name));
+                    }
                 }
-            } else {
-                if meta.len() > MAX_UPLOAD_BYTES {
-                    return Err(format!(
-                        "{}: larger than {} MB",
-                        src.display(),
-                        MAX_UPLOAD_BYTES >> 20
-                    ));
-                }
-                let data = std::fs::read(&src).map_err(|e| e.to_string())?;
-                fs.write_new(&target, &data, local_mode(&meta)).await?;
+                Local::File { data, mode } => fs.write_new(&target, &data, mode).await?,
             }
         }
     }
@@ -1239,6 +1265,77 @@ mod tests {
                 .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
                 .collect();
             assert_eq!(rest, vec!["a.txt".to_string()]);
+        }
+
+        struct LyingFs(SftpConn);
+
+        impl RemoteFs for LyingFs {
+            async fn read_dir(&self, path: &str) -> Result<Vec<RemoteEntry>, FsError> {
+                let mut entries = self.0.read_dir(path).await?;
+                for e in &mut entries {
+                    if e.meta.kind == RemoteKind::Symlink {
+                        e.meta.kind = RemoteKind::Dir;
+                    }
+                }
+                Ok(entries)
+            }
+            async fn stat(&self, p: &str) -> Result<RemoteMetadata, FsError> {
+                self.0.stat(p).await
+            }
+            async fn read(&self, p: &str, l: u64) -> Result<ReadOutcome, FsError> {
+                self.0.read(p, l).await
+            }
+            async fn write_atomic(&self, p: &str, d: &[u8]) -> Result<RemoteMetadata, FsError> {
+                self.0.write_atomic(p, d).await
+            }
+            async fn write_new(&self, p: &str, d: &[u8], m: Option<u32>) -> Result<(), FsError> {
+                self.0.write_new(p, d, m).await
+            }
+            async fn write_in_place(&self, p: &str, d: &[u8]) -> Result<(), FsError> {
+                self.0.write_in_place(p, d).await
+            }
+            async fn lstat(&self, p: &str) -> Result<RemoteMetadata, FsError> {
+                self.0.lstat(p).await
+            }
+            async fn posix_rename(&self, a: &str, b: &str) -> Result<(), FsError> {
+                self.0.posix_rename(a, b).await
+            }
+            async fn mkdir(&self, p: &str) -> Result<(), FsError> {
+                self.0.mkdir(p).await
+            }
+            async fn remove(&self, p: &str) -> Result<(), FsError> {
+                self.0.remove(p).await
+            }
+            async fn rename(&self, a: &str, b: &str) -> Result<(), FsError> {
+                self.0.rename(a, b).await
+            }
+            async fn realpath(&self, p: &str) -> Result<String, FsError> {
+                self.0.realpath(p).await
+            }
+            async fn setstat(
+                &self,
+                p: &str,
+                a: crate::modules::remote::fs::SetAttrs,
+            ) -> Result<(), FsError> {
+                self.0.setstat(p, a).await
+            }
+            async fn supports_posix_rename(&self) -> Result<bool, FsError> {
+                self.0.supports_posix_rename().await
+            }
+        }
+
+        #[test]
+        fn remove_tree_never_descends_through_a_link_reported_as_dir() {
+            let t = Tree::new();
+            std::fs::create_dir(t.p("d")).unwrap();
+            std::fs::write(t.p("d/f"), "x").unwrap();
+            symlink(&t.outside, t.p("d/out")).unwrap();
+            rt().block_on(async {
+                let fs = LyingFs(conn_or_skip!());
+                remove_tree(&fs, &t.p("d"), 100).await.unwrap();
+            });
+            assert!(!Path::new(&t.p("d")).exists());
+            t.secret_intact();
         }
 
         #[test]

@@ -147,13 +147,58 @@ pub async fn workspace_authorize(
     workspace: Option<WorkspaceEnv>,
     registry: tauri::State<'_, WorkspaceRegistry>,
     remote: tauri::State<'_, crate::modules::remote::RemoteRegistry>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
+    if let WorkspaceEnv::Ssh { host } = WorkspaceEnv::from_option(workspace.clone()) {
+        let fs = crate::modules::remote::fs::dispatch::host_fs(&app, &host);
+        return authorize_ssh_root(&remote, &host, &path, fs, SSH_REALPATH_TIMEOUT).await;
+    }
     authorize_root(
         &registry,
         &remote,
         &path,
         WorkspaceEnv::from_option(workspace),
     )
+}
+
+const SSH_REALPATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Registers the server's realpath of `path`; the lexical path only when the
+/// session cannot be reached in time.
+async fn authorize_ssh_root<F: crate::modules::remote::fs::RemoteFs>(
+    remote: &crate::modules::remote::RemoteRegistry,
+    host: &str,
+    path: &str,
+    fs: Result<F, String>,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    use crate::modules::remote::fs::{validate_path, FsError};
+    validate_path(path).map_err(|e| e.to_string())?;
+    let fs = match fs {
+        Ok(fs) => fs,
+        Err(e) => {
+            log::warn!("ssh root {path:?} on {host}: no session ({e}), registering lexical path");
+            return remote.add_root(host, path);
+        }
+    };
+    match tokio::time::timeout(timeout, fs.realpath(path)).await {
+        Ok(Ok(real)) => {
+            log::info!("ssh root {path:?} on {host}: registering realpath {real:?}");
+            remote.add_root(host, &real)
+        }
+        Ok(Err(e)) if !e.is_connection() => Err(match e {
+            FsError::NotFound(_) => format!("remote folder not found: {path}"),
+            other => other.to_string(),
+        }),
+        Ok(Err(e)) => {
+            log::warn!("ssh root {path:?} on {host}: {e}, registering lexical path");
+            remote.add_root(host, path)
+        }
+        Err(_) => {
+            log::warn!("ssh root {path:?} on {host}: realpath timed out, registering lexical path");
+            remote.add_root(host, path)
+        }
+    }
 }
 
 fn authorize_root(
@@ -811,6 +856,61 @@ mod auth_tests {
         assert!(local.roots.lock().unwrap().is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn authorize_ssh_root_registers_the_server_realpath() {
+        use crate::modules::remote::fs::sftp::{test_launch, SftpConn};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let tmp = tempdir("sshroot");
+        let real = fs::canonicalize(&tmp).unwrap();
+        std::os::unix::fs::symlink(&real, real.join("link")).unwrap();
+        let remote = crate::modules::remote::RemoteRegistry::default();
+        rt.block_on(async {
+            let Some(l) = test_launch() else {
+                eprintln!("sftp-server not found, skipping");
+                return;
+            };
+            let conn = SftpConn::connect(&l).await.unwrap();
+            let link = format!("{}/link", real.display());
+            let got = authorize_ssh_root(
+                &remote,
+                "h",
+                &link,
+                Ok(conn),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+            assert_eq!(got, real.to_str().unwrap());
+            assert!(remote.is_authorized("h", real.to_str().unwrap()));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authorize_ssh_root_falls_back_to_lexical_without_a_session() {
+        use crate::modules::remote::fs::sftp::SftpConn;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let remote = crate::modules::remote::RemoteRegistry::default();
+        let got = rt
+            .block_on(authorize_ssh_root::<SftpConn>(
+                &remote,
+                "h",
+                "/srv/app/../app",
+                Err("down".into()),
+                std::time::Duration::from_secs(1),
+            ))
+            .unwrap();
+        assert_eq!(got, "/srv/app");
+        assert!(remote.is_authorized("h", "/srv/app/x"));
+    }
+
     #[test]
     fn authorize_spawn_cwd_accepts_none() {
         let reg = WorkspaceRegistry::default();
@@ -1011,13 +1111,22 @@ mod appimage_tests {
         let env = reader(&[
             ("LD_LIBRARY_PATH", "/tmp/.mount_Terax_X/usr/lib:/usr/lib"),
             ("PATH", "/tmp/.mount_Terax_X/usr/bin:/usr/bin:/bin"),
-            ("GST_PLUGIN_SYSTEM_PATH", "/tmp/.mount_Terax_X/usr/lib/gstreamer-1.0"),
+            (
+                "GST_PLUGIN_SYSTEM_PATH",
+                "/tmp/.mount_Terax_X/usr/lib/gstreamer-1.0",
+            ),
             ("APPDIR", "/tmp/.mount_Terax_X"),
         ]);
         let out = compute_appimage_env_overrides(appdir, env);
 
-        assert_eq!(find(&out, "LD_LIBRARY_PATH"), Some(&Some(OsString::from("/usr/lib"))));
-        assert_eq!(find(&out, "PATH"), Some(&Some(OsString::from("/usr/bin:/bin"))));
+        assert_eq!(
+            find(&out, "LD_LIBRARY_PATH"),
+            Some(&Some(OsString::from("/usr/lib")))
+        );
+        assert_eq!(
+            find(&out, "PATH"),
+            Some(&Some(OsString::from("/usr/bin:/bin")))
+        );
         // Only an APPDIR entry, so the var is removed entirely.
         assert_eq!(find(&out, "GST_PLUGIN_SYSTEM_PATH"), Some(&None));
         assert_eq!(find(&out, "APPDIR"), Some(&None));
@@ -1041,9 +1150,16 @@ mod appimage_tests {
     fn unsets_value_vars_only_when_pointing_into_appdir() {
         let appdir = Path::new("/tmp/.mount_Terax_X");
         let into = reader(&[("LD_PRELOAD", "/tmp/.mount_Terax_X/usr/lib/x.so")]);
-        assert_eq!(find(&compute_appimage_env_overrides(appdir, into), "LD_PRELOAD"), Some(&None));
+        assert_eq!(
+            find(&compute_appimage_env_overrides(appdir, into), "LD_PRELOAD"),
+            Some(&None)
+        );
 
         let outside = reader(&[("FONTCONFIG_FILE", "/etc/fonts/fonts.conf")]);
-        assert!(find(&compute_appimage_env_overrides(appdir, outside), "FONTCONFIG_FILE").is_none());
+        assert!(find(
+            &compute_appimage_env_overrides(appdir, outside),
+            "FONTCONFIG_FILE"
+        )
+        .is_none());
     }
 }
