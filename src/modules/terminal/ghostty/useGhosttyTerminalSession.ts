@@ -854,7 +854,7 @@ function cellClickDeps(
   return {
     model,
     state: (altKey) => ({
-      enabled: usePreferencesStore.getState().clickToMoveCursor,
+      enabled: usePreferencesStore.getState().terminalClickToMoveCursor,
       blocksPrompt: ghosttyBlocks(session.leafId)?.getMode() === "prompt",
       alternateScreen: model.modes().alternateScreen,
       mouseTracking: model.modes().mouseTracking,

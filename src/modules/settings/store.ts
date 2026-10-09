@@ -175,7 +175,6 @@ export type Preferences = {
   agentNotificationSound: boolean;
   agentLaunchCommands: AgentLaunchCommands;
   launchCommandFiles: LaunchCommandFiles;
-  clickToMoveCursor: boolean;
   defaultWorkspaceEnv: string;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
   editorAutoSave: boolean;
@@ -285,7 +284,6 @@ const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
 const KEY_AGENT_NOTIFICATION_SOUND = "agentNotificationSound";
 const KEY_AGENT_LAUNCH_COMMANDS = "agentLaunchCommands";
 const KEY_LAUNCH_COMMAND_FILES = "launchCommandFiles";
-const KEY_CLICK_TO_MOVE_CURSOR = "clickToMoveCursor";
 const KEY_DEFAULT_WORKSPACE_ENV = "defaultWorkspaceEnv";
 const KEY_SHORTCUTS = "shortcuts";
 const KEY_EDITOR_AUTO_SAVE = "editorAutoSave";
@@ -386,7 +384,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   agentNotificationSound: true,
   agentLaunchCommands: DEFAULT_AGENT_LAUNCH_COMMANDS,
   launchCommandFiles: "run",
-  clickToMoveCursor: true,
   defaultWorkspaceEnv: "local",
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
   editorAutoSave: false,
@@ -581,9 +578,6 @@ export async function loadPreferences(): Promise<Preferences> {
     ),
     launchCommandFiles:
       get<string>(KEY_LAUNCH_COMMAND_FILES) === "edit" ? "edit" : "run",
-    clickToMoveCursor:
-      get<boolean>(KEY_CLICK_TO_MOVE_CURSOR) ??
-      DEFAULT_PREFERENCES.clickToMoveCursor,
     defaultWorkspaceEnv:
       get<string>(KEY_DEFAULT_WORKSPACE_ENV) ??
       DEFAULT_PREFERENCES.defaultWorkspaceEnv,
@@ -1078,10 +1072,6 @@ export async function setLaunchCommandFiles(
   await writePref(KEY_LAUNCH_COMMAND_FILES, value === "edit" ? "edit" : "run");
 }
 
-export async function setClickToMoveCursor(value: boolean): Promise<void> {
-  await writePref(KEY_CLICK_TO_MOVE_CURSOR, value);
-}
-
 export async function setDefaultWorkspaceEnv(value: string): Promise<void> {
   await writePref(KEY_DEFAULT_WORKSPACE_ENV, value);
 }
@@ -1158,7 +1148,6 @@ export async function onPreferencesChange(
     [KEY_AGENT_NOTIFICATION_SOUND]: "agentNotificationSound",
     [KEY_AGENT_LAUNCH_COMMANDS]: "agentLaunchCommands",
     [KEY_LAUNCH_COMMAND_FILES]: "launchCommandFiles",
-    [KEY_CLICK_TO_MOVE_CURSOR]: "clickToMoveCursor",
     [KEY_DEFAULT_WORKSPACE_ENV]: "defaultWorkspaceEnv",
     [KEY_SHORTCUTS]: "shortcuts",
     [KEY_EDITOR_AUTO_SAVE]: "editorAutoSave",

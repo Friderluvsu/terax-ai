@@ -8,7 +8,7 @@ import {
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { Switch } from "@/components/ui/switch";
 import {
-  setClickToMoveCursor,
+  setTerminalClickToMoveCursor,
   setLaunchCommandFiles,
   setTerminalDefaultMode,
   type TerminalDefaultMode,
@@ -24,7 +24,9 @@ const NEW_TAB_MODES: { value: TerminalDefaultMode; label: string }[] = [
 export function ForkSection() {
   const newTabMode = usePreferencesStore((s) => s.terminalDefaultMode);
   const launchCommandFiles = usePreferencesStore((s) => s.launchCommandFiles);
-  const clickToMoveCursor = usePreferencesStore((s) => s.clickToMoveCursor);
+  const clickToMoveCursor = usePreferencesStore(
+    (s) => s.terminalClickToMoveCursor,
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -82,7 +84,7 @@ export function ForkSection() {
         >
           <Switch
             checked={clickToMoveCursor}
-            onCheckedChange={(v) => void setClickToMoveCursor(v)}
+            onCheckedChange={(v) => void setTerminalClickToMoveCursor(v)}
           />
         </SettingRow>
       </div>
