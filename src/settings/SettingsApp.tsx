@@ -5,6 +5,7 @@ import type { SettingsTab } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   AiScanIcon,
+  GitBranchIcon,
   InformationCircleIcon,
   KeyboardIcon,
   PaintBoardIcon,
@@ -18,6 +19,7 @@ import { type JSX, useEffect, useState } from "react";
 import { AboutSection } from "./sections/AboutSection";
 import { AgentsSection } from "./sections/AgentsSection";
 import { EditorSection } from "./sections/EditorSection";
+import { ForkSection } from "./sections/ForkSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { ShortcutsSection } from "./sections/ShortcutsSection";
@@ -61,6 +63,12 @@ const TABS: {
     component: AgentsSection,
   },
   {
+    id: "fork",
+    label: "Fork",
+    icon: GitBranchIcon,
+    component: ForkSection,
+  },
+  {
     id: "about",
     label: "About",
     icon: InformationCircleIcon,
@@ -75,6 +83,7 @@ const VALID_TABS: SettingsTab[] = [
   "shortcuts",
   "models",
   "agents",
+  "fork",
   "about",
 ];
 
