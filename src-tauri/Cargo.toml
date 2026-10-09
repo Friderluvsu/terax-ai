@@ -60,7 +60,13 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 bytes = "1"
 futures-util = "0.3"
-tokio = { version = "1", default-features = false, features = ["rt"] }
+tokio = { version = "1", default-features = false, features = [
+	"rt",
+	"process",
+	"io-util",
+	"time",
+	"sync",
+] }
 tempfile = "3"
 notify = "8.2.0"
 which = "8.0.4"
@@ -72,6 +78,7 @@ wasmparser = { version = "=0.259.0", default-features = false, features = ["std"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+russh-sftp = { version = "=3.0.1", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = [

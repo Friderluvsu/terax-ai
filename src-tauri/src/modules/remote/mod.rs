@@ -4,6 +4,7 @@ pub mod control;
 pub mod exec;
 #[cfg(test)]
 mod fail_closed_tests;
+pub mod fs;
 pub mod quote;
 pub mod registry;
 pub mod shell_init;
@@ -87,6 +88,7 @@ pub async fn ssh_disconnect(
     {
         target::validate_alias(&host)?;
         let dir = state.socket_dir(&app.config().identifier)?;
+        state.sftp_disconnect(&host);
         blocking(move || control::exit(&dir, &host)).await
     }
     #[cfg(not(unix))]
