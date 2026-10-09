@@ -61,6 +61,14 @@ Output streams from `pty_open` via a Tauri `Channel<PtyEvent>`.
 
 - `fs_watch_add` / `fs_watch_remove` - filesystem change notifications
 
+### HTML preview (`src-tauri/src/modules/preview/`)
+
+- `preview_serve` - registers a local HTML file for the `terax-preview://` protocol and returns `{token, url, root}`. Local workspaces only. The root is the nearest ancestor with `.git` or `package.json` (bounded by `rootHint`), otherwise the file's directory; never `$HOME`, a filesystem root or an ancestor of `$HOME`. The root must be authorized and pass the secret-path deny-list. At most 32 live tokens, evicted least recently used.
+- `preview_release` - drops a token and the watches it took
+- `preview_open_external` - opens the token's own file in the default browser (on macOS the app registered for `https:`, because Terax itself handles `.html`)
+
+The protocol handler serves `terax-preview://<token>/<path>` (macOS, Linux) and `http://terax-preview.localhost/<token>/<path>` (Windows). Directories it serves from are watched for live reload even when they are in `SKIP_DIRS` (`dist/`, `build/`), and released with the token.
+
 #### Search
 
 - `fs_search` - fuzzy file finder

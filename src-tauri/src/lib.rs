@@ -3,8 +3,8 @@ pub mod modules;
 #[cfg(target_os = "macos")]
 use modules::app_menu;
 use modules::{
-    agent, control, fs, git, history, lsp, net, pty, remote, scripts, secrets, shell, vibrancy,
-    workspace,
+    agent, control, fs, git, history, lsp, net, preview, pty, remote, scripts, secrets, shell,
+    vibrancy, workspace,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -212,6 +212,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol(preview::SCHEME, preview::handler::handle)
         .setup(move |_app| {
             #[cfg(target_os = "macos")]
             modules::window_presentation::macos::install(_app.handle());
@@ -241,6 +242,7 @@ pub fn run() {
         .manage(history::HistoryState::default())
         .manage(lsp::LspState::default())
         .manage(fs::grep::ContentSearchState::default())
+        .manage(preview::PreviewState::default())
         .manage({
             let registry = workspace::WorkspaceRegistry::default();
             workspace::bootstrap_registry(&registry);
@@ -280,6 +282,9 @@ pub fn run() {
             fs::mutate::fs_copy,
             fs::watch::fs_watch_add,
             fs::watch::fs_watch_remove,
+            preview::preview_serve,
+            preview::preview_release,
+            preview::preview_open_external,
             lsp::lsp_detect,
             lsp::lsp_host_pid,
             lsp::lsp_resolve_root,

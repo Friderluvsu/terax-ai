@@ -179,20 +179,25 @@ fn collect(set: &mut HashSet<String>, ev: notify::Result<Event>) {
     }
 }
 
-fn add_paths(inner: &mut WatchInner, paths: Vec<PathBuf>) {
+// Returns the paths whose refcount was taken, so a caller can release exactly those.
+fn add_paths(inner: &mut WatchInner, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut added = Vec::with_capacity(paths.len());
     for canonical in paths {
         let current = inner.refcounts.get(&canonical).copied().unwrap_or(0);
         if current == 0 {
             match inner.watcher.watch(&canonical, RecursiveMode::NonRecursive) {
                 Ok(()) => {
-                    inner.refcounts.insert(canonical, 1);
+                    inner.refcounts.insert(canonical.clone(), 1);
+                    added.push(canonical);
                 }
                 Err(e) => log::debug!("fs_watch add {} failed: {e}", canonical.display()),
             }
         } else {
-            inner.refcounts.insert(canonical, current + 1);
+            inner.refcounts.insert(canonical.clone(), current + 1);
+            added.push(canonical);
         }
     }
+    added
 }
 
 fn remove_paths(inner: &mut WatchInner, paths: Vec<PathBuf>) {
@@ -243,6 +248,50 @@ pub(crate) fn prepare_remove(
             Ok(std::fs::canonicalize(&resolved).unwrap_or(resolved))
         })
         .collect()
+}
+
+// HTML previews watch the dirs they actually served, including SKIP_DIRS such
+// as `dist/`, but only inside authorized roots.
+fn prepare_preview(registry: &WorkspaceRegistry, dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    dirs.into_iter()
+        .filter_map(|dir| {
+            let canonical = std::fs::canonicalize(&dir).ok()?;
+            (canonical.is_dir() && registry.is_authorized(&canonical)).then_some(canonical)
+        })
+        .collect()
+}
+
+pub fn watch_preview_dirs(
+    state: &FsWatchState,
+    app: &AppHandle,
+    registry: &WorkspaceRegistry,
+    dirs: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let prepared = prepare_preview(registry, dirs);
+    if prepared.is_empty() {
+        return Vec::new();
+    }
+    if let Err(e) = ensure_started(state, app) {
+        log::debug!("preview watch start failed: {e}");
+        return Vec::new();
+    }
+    let mut guard = state.inner.lock().expect("fs watch state poisoned");
+    guard
+        .as_mut()
+        .map(|inner| add_paths(inner, prepared))
+        .unwrap_or_default()
+}
+
+/// `dirs` must be the canonical paths `watch_preview_dirs` returned.
+pub fn unwatch_preview_dirs(state: &FsWatchState, dirs: impl IntoIterator<Item = PathBuf>) {
+    let dirs: Vec<PathBuf> = dirs.into_iter().collect();
+    if dirs.is_empty() {
+        return;
+    }
+    let mut guard = state.inner.lock().expect("fs watch state poisoned");
+    if let Some(inner) = guard.as_mut() {
+        remove_paths(inner, dirs);
+    }
 }
 
 #[tauri::command]
@@ -317,5 +366,29 @@ mod tests {
         collect(&mut set, modify());
         collect(&mut set, modify());
         assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn preview_dirs_skip_no_names_but_require_authorization() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dist = dir.path().join("dist");
+        std::fs::create_dir(&dist).expect("mkdir");
+        let unauthorized = WorkspaceRegistry::default();
+        assert!(prepare_preview(&unauthorized, vec![dist.clone()]).is_empty());
+
+        let registry = WorkspaceRegistry::default();
+        registry.authorize(dir.path()).expect("authorize");
+        let canonical = std::fs::canonicalize(&dist).expect("canon");
+        assert_eq!(
+            prepare_preview(&registry, vec![dist.clone(), dir.path().join("missing")]),
+            vec![canonical.clone()]
+        );
+        assert!(is_skipped(&canonical));
+        assert!(prepare_add(
+            &registry,
+            &WorkspaceEnv::Local,
+            vec![dist.display().to_string()]
+        )
+        .is_empty());
     }
 }
