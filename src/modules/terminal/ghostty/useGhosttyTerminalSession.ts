@@ -170,9 +170,8 @@ export function useGhosttyTerminalSession({
     (state) => state.terminalLetterSpacing,
   );
   const zoomLevel = usePreferencesStore((state) => state.zoomLevel);
-  const fontsVersion = useSyncExternalStore(
-    subscribeUserFonts,
-    getUserFontsVersion,
+  const fontsVersion = useSyncExternalStore(subscribeUserFonts, () =>
+    getUserFontsVersion(fontFamily),
   );
   useEffect(() => {
     void ensureUserFonts(fontFamily, fontWeight);
@@ -1211,7 +1210,7 @@ async function loadUserFonts(session: GhosttySession): Promise<void> {
   session.font = {
     ...session.font,
     family: resolveFontFamily(terminalFontFamily),
-    fontsVersion: getUserFontsVersion(),
+    fontsVersion: getUserFontsVersion(terminalFontFamily),
   };
 }
 

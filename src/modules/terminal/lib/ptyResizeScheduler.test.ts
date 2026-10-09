@@ -85,4 +85,46 @@ describe("PtyResizeScheduler", () => {
     expect(scheduler.flush()).toBe(false);
     expect(deliver).toHaveBeenCalledOnce();
   });
+
+  it("passes a round trip to the shell as a real size change", () => {
+    vi.useFakeTimers();
+    const deliver = vi.fn();
+    const scheduler = new PtyResizeScheduler(deliver);
+    scheduler.schedule(80, 24);
+    scheduler.flush();
+    deliver.mockClear();
+
+    scheduler.schedule(80, 20);
+    scheduler.schedule(80, 24);
+    vi.advanceTimersByTime(PTY_RESIZE_DEBOUNCE_MS);
+    expect(deliver.mock.calls).toEqual([[80, 23]]);
+    vi.advanceTimersByTime(PTY_RESIZE_DEBOUNCE_MS);
+    expect(deliver.mock.calls).toEqual([
+      [80, 23],
+      [80, 24],
+    ]);
+    vi.runAllTimers();
+    expect(deliver).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds a round trip made during a split gesture until it ends", () => {
+    vi.useFakeTimers();
+    const deliver = vi.fn();
+    const scheduler = new PtyResizeScheduler(deliver);
+    scheduler.schedule(80, 1);
+    scheduler.flush();
+    deliver.mockClear();
+
+    scheduler.suspend();
+    scheduler.schedule(90, 1);
+    scheduler.schedule(80, 1);
+    vi.advanceTimersByTime(PTY_RESIZE_DEBOUNCE_MS * 4);
+    expect(deliver).not.toHaveBeenCalled();
+    scheduler.resume();
+    vi.runAllTimers();
+    expect(deliver.mock.calls).toEqual([
+      [80, 2],
+      [80, 1],
+    ]);
+  });
 });

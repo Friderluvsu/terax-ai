@@ -23,6 +23,7 @@ export class PtyResizeScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pending: PtyDimensions | null = null;
   private delivered: PtyDimensions | null = null;
+  private moved = false;
   private suspended = false;
   private scheduleCount = 0;
   private deliveryCount = 0;
@@ -45,6 +46,7 @@ export class PtyResizeScheduler {
     if (!sameDimensions(this.pending, cols, rows)) {
       this.pending = { cols, rows };
     }
+    if (!sameDimensions(this.delivered, cols, rows)) this.moved = true;
     if (this.suspended) return;
     this.armTimer();
   }
@@ -70,6 +72,7 @@ export class PtyResizeScheduler {
     this.timer = null;
     this.pending = null;
     this.delivered = null;
+    this.moved = false;
   }
 
   flush(): boolean {
@@ -77,16 +80,21 @@ export class PtyResizeScheduler {
     if (this.timer !== null) globalThis.clearTimeout(this.timer);
     this.timer = null;
     const dimensions = this.pending;
+    const moved = this.moved;
     this.pending = null;
-    if (
-      !dimensions ||
-      sameDimensions(this.delivered, dimensions.cols, dimensions.rows)
-    ) {
-      return false;
+    this.moved = false;
+    if (!dimensions) return false;
+    if (sameDimensions(this.delivered, dimensions.cols, dimensions.rows)) {
+      if (!moved) return false;
+      // The terminal reflowed and came back, clearing its prompt; the shell
+      // redraws only when it observes a different size, so pass through one.
+      const { cols, rows } = dimensions;
+      this.send({ cols, rows: rows > 1 ? rows - 1 : rows + 1 });
+      this.pending = dimensions;
+      this.armTimer();
+      return true;
     }
-    this.delivered = dimensions;
-    this.deliveryCount += 1;
-    this.deliver(dimensions.cols, dimensions.rows);
+    this.send(dimensions);
     return true;
   }
 
@@ -99,6 +107,12 @@ export class PtyResizeScheduler {
       pending: this.pending ? { ...this.pending } : null,
       delivered: this.delivered ? { ...this.delivered } : null,
     };
+  }
+
+  private send(dimensions: PtyDimensions): void {
+    this.delivered = dimensions;
+    this.deliveryCount += 1;
+    this.deliver(dimensions.cols, dimensions.rows);
   }
 
   private armTimer(): void {
