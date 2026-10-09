@@ -1167,6 +1167,7 @@ export function rendererProfileKey(profile: WebGlRendererProfile): string {
     font.weight,
     font.lineHeight,
     font.letterSpacing,
+    font.fontsVersion ?? 0,
     profile.metrics.cellWidth,
     profile.metrics.cellHeight,
     profile.metrics.baseline,

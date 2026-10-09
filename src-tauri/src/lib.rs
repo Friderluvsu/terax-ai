@@ -240,6 +240,7 @@ pub fn run() {
         .manage(secrets::SecretsState::default())
         .manage(fs::watch::FsWatchState::default())
         .manage(history::HistoryState::default())
+        .manage(modules::fonts::FontsState::default())
         .manage(lsp::LspState::default())
         .manage(fs::grep::ContentSearchState::default())
         .manage(preview::PreviewState::default())
@@ -349,6 +350,9 @@ pub fn run() {
             remote::ssh_resolve,
             net::ai_http_request,
             net::ai_http_stream,
+            modules::fonts::fonts_resolve,
+            modules::fonts::fonts_nerd_fallback,
+            modules::fonts::font_read,
             history::history_suggest,
             history::history_commands,
             history::history_record,

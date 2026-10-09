@@ -1353,6 +1353,7 @@ function fontMetricsKey(metrics: TerminalFontMetrics): string {
     metrics.font.lineHeight,
     metrics.font.letterSpacing,
     metrics.font.weight,
+    metrics.font.fontsVersion ?? 0,
     metrics.cellWidth,
     metrics.cellHeight,
     metrics.baseline,

@@ -878,6 +878,7 @@ function fontAtlasKey(metrics: TerminalFontMetrics, scale: number): string {
     font.weight,
     font.lineHeight,
     font.letterSpacing,
+    font.fontsVersion ?? 0,
     scale,
   ].join("|");
 }
