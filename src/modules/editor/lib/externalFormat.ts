@@ -1,6 +1,6 @@
 import { quoteShellArg } from "@/lib/shellQuote";
 import type { EditorFormatter } from "@/modules/settings/store";
-import { fsFor, type WorkspaceEnv } from "@/modules/workspace";
+import { envCaps, fsFor, type WorkspaceEnv } from "@/modules/workspace";
 import type { EditorView } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -120,6 +120,7 @@ export async function runExternalFormatter(
   env: WorkspaceEnv,
   customTemplate = "",
 ): Promise<string | null> {
+  if (!envCaps(env).formatOnSave) return null;
   const command = buildCommand(formatter, path, customTemplate);
   if (!command) {
     return "No custom format command configured in Settings.";

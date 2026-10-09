@@ -1,3 +1,5 @@
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { guardRemoteTools } from "../lib/remoteGuard";
 import { buildManagedAgentTools } from "./agent";
 import { buildEditTools } from "./edit";
 import { buildFsTools } from "./fs";
@@ -29,7 +31,7 @@ export { resolvePath, type ToolContext } from "./context";
  * outside that.
  */
 export function buildTools(ctx: import("./context").ToolContext) {
-  return {
+  const tools = {
     ...buildFsTools(ctx),
     ...buildEditTools(ctx),
     ...buildSearchTools(ctx),
@@ -39,6 +41,11 @@ export function buildTools(ctx: import("./context").ToolContext) {
     ...buildTodoTools(ctx),
     ...buildManagedAgentTools(ctx),
   } as const;
+  return guardRemoteTools(
+    tools,
+    ctx.env,
+    usePreferencesStore.getState().aiRemoteToolsReadOnly,
+  );
 }
 
 export type ChatTools = ReturnType<typeof buildTools>;
