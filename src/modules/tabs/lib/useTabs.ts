@@ -50,6 +50,8 @@ export type TerminalTab = TabBase & {
   customTitle?: string;
 };
 
+export type DocView = "code" | "split" | "preview";
+
 export type EditorTab = TabBase & {
   id: number;
   kind: "editor";
@@ -63,6 +65,7 @@ export type EditorTab = TabBase & {
    */
   preview: boolean;
   overrideLanguage?: string | null;
+  docView?: DocView;
 };
 
 export type PreviewTab = TabBase & {
@@ -998,6 +1001,16 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     );
   }, []);
 
+  const setDocView = useCallback((id: number, view: DocView) => {
+    setTabs((curr) =>
+      curr.map((t) =>
+        t.id === id && t.kind === "editor" && (t.docView ?? "code") !== view
+          ? { ...t, docView: view }
+          : t,
+      ),
+    );
+  }, []);
+
   const setMarkdownView = useCallback(
     (id: number, mode: "rendered" | "raw") => {
       setTabs((curr) =>
@@ -1430,6 +1443,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     newPreviewTab,
     newMarkdownTab,
     setMarkdownView,
+    setDocView,
     openAiDiffTab,
     openGitDiffTab,
     openCommitHistoryTab,

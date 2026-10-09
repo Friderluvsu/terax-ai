@@ -33,6 +33,8 @@ type Props = {
   onGitHistorySearchHandle: GitHistoryStackProps["onSearchHandle"];
   onSetMarkdownView: EditorStackProps["onSetMarkdownView"];
   onRunScript: EditorStackProps["onRunScript"];
+  onSetDocView: EditorStackProps["onSetDocView"];
+  explorerRoot: string | null;
 };
 
 const LAYER = "absolute inset-0";
@@ -65,6 +67,8 @@ export function WorkspaceSurface({
   onGitHistorySearchHandle,
   onSetMarkdownView,
   onRunScript,
+  onSetDocView,
+  explorerRoot,
 }: Props) {
   const kind = activeTab?.kind;
   const isTerminalTab = kind === "terminal";
@@ -107,6 +111,8 @@ export function WorkspaceSurface({
           onCloseTab={onEditorCloseTab}
           onSetMarkdownView={onSetMarkdownView}
           onRunScript={onRunScript}
+          onSetDocView={onSetDocView}
+          rootHint={explorerRoot}
         />
       </div>
       <div
