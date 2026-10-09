@@ -101,7 +101,7 @@ pub fn bootstrap(cwd: Option<&str>, blocks: bool, integration: bool) -> String {
         ));
     }
     s.push_str("  : > \"$_tx_tmp/ok\" &&\n");
-    s.push_str("  { [ -d \"$_tx_dir\" ] || mv -f \"$_tx_tmp\" \"$_tx_dir\" 2>/dev/null; }\n");
+    s.push_str("  { [ -d \"$_tx_dir\" ] || mv -f \"$_tx_tmp\" \"$_tx_dir\" 2>/dev/null; rm -rf \"$_tx_dir/${_tx_tmp##*/}\"; }\n");
     s.push_str("  rm -rf \"$_tx_tmp\"\n");
     s.push_str("fi\n");
     s.push_str(&launch_section());
@@ -298,6 +298,40 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[cfg(unix)]
+    #[test]
+    fn bootstrap_install_leaves_no_nested_tmp_when_dir_exists() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home
+            .path()
+            .join(".cache/terax/shell-integration")
+            .join(integration_hash());
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = bootstrap(None, false, true).replace(&launch_section(), "");
+        for _ in 0..2 {
+            let st = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .env("HOME", home.path())
+                .status()
+                .unwrap();
+            assert!(st.success());
+        }
+        let nested: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp."))
+            .collect();
+        assert!(nested.is_empty());
+        let root = dir.parent().unwrap();
+        let stray = std::fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp."))
+            .count();
+        assert_eq!(stray, 0);
+    }
+
     mod exec_tests {
         use super::super::*;
         use std::path::{Path, PathBuf};

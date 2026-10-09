@@ -148,11 +148,24 @@ pub async fn workspace_authorize(
     registry: tauri::State<'_, WorkspaceRegistry>,
     remote: tauri::State<'_, crate::modules::remote::RemoteRegistry>,
 ) -> Result<String, String> {
-    let workspace = WorkspaceEnv::from_option(workspace);
+    authorize_root(
+        &registry,
+        &remote,
+        &path,
+        WorkspaceEnv::from_option(workspace),
+    )
+}
+
+fn authorize_root(
+    registry: &WorkspaceRegistry,
+    remote: &crate::modules::remote::RemoteRegistry,
+    path: &str,
+    workspace: WorkspaceEnv,
+) -> Result<String, String> {
     if let WorkspaceEnv::Ssh { host } = &workspace {
-        return remote.add_root(host, &path);
+        return remote.add_root(host, path);
     }
-    let resolved = local_path(&path, &workspace)?;
+    let resolved = local_path(path, &workspace)?;
     let canonical = registry.authorize(&resolved).map_err(|e| e.to_string())?;
     Ok(crate::modules::fs::to_canon(&canonical))
 }
@@ -782,6 +795,20 @@ mod auth_tests {
         p.push(format!("terax-auth-{label}-{nanos}-{}", std::process::id()));
         fs::create_dir_all(&p).expect("create tempdir");
         fs::canonicalize(&p).expect("canonicalize tempdir")
+    }
+
+    #[test]
+    fn authorize_root_ssh_only_touches_remote_registry() {
+        let local = WorkspaceRegistry::default();
+        let remote = crate::modules::remote::RemoteRegistry::default();
+        let ws = WorkspaceEnv::Ssh {
+            host: "myhost".into(),
+        };
+        let root = authorize_root(&local, &remote, "/srv/app", ws).unwrap();
+        assert_eq!(root, "/srv/app");
+        assert!(remote.is_authorized("myhost", "/srv/app/x"));
+        assert!(!local.is_authorized(Path::new("/srv/app")));
+        assert!(local.roots.lock().unwrap().is_empty());
     }
 
     #[test]

@@ -20,10 +20,20 @@ if set -q TERAX_CLI; and test -x "$TERAX_CLI"
     end
 end
 
-# Terax is a clean terminal; drop fish's default startup greeting. A user who
-# sets their own in config.fish (sourced after this) keeps it.
-function fish_greeting
+# Terax is a clean terminal; drop fish's default startup greeting. This file
+# loads after config.fish, so a greeting the user set (variable or own
+# function) is kept.
+function __terax_quiet_greeting
+    set -q fish_greeting
+    and return
+    set -l src (functions --details fish_greeting 2>/dev/null)
+    if test -z "$src"
+        or string match -q -- "$__fish_data_dir/*" "$src"
+        function fish_greeting
+        end
+    end
 end
+__terax_quiet_greeting
 
 set -g __TERAX_HOST (uname -n 2>/dev/null; or echo localhost)
 
@@ -72,8 +82,7 @@ function __terax_install_prompt
     if set -q TERAX_BLOCKS
         function fish_right_prompt
         end
-        function fish_greeting
-        end
+        __terax_quiet_greeting
     end
     function fish_prompt
         set -l __terax_status $status
