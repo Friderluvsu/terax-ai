@@ -146,8 +146,12 @@ pub async fn workspace_authorize(
     path: String,
     workspace: Option<WorkspaceEnv>,
     registry: tauri::State<'_, WorkspaceRegistry>,
+    remote: tauri::State<'_, crate::modules::remote::RemoteRegistry>,
 ) -> Result<String, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        return remote.add_root(host, &path);
+    }
     let resolved = local_path(&path, &workspace)?;
     let canonical = registry.authorize(&resolved).map_err(|e| e.to_string())?;
     Ok(crate::modules::fs::to_canon(&canonical))

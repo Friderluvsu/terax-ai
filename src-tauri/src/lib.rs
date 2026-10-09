@@ -244,6 +244,7 @@ pub fn run() {
         .manage(fs::grep::ContentSearchState::default())
         .manage(preview::PreviewState::default())
         .manage(remote::RemoteState::default())
+        .manage(remote::RemoteRegistry::default())
         .manage({
             let registry = workspace::WorkspaceRegistry::default();
             workspace::bootstrap_registry(&registry);

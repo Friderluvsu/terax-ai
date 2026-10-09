@@ -5,10 +5,12 @@ pub mod exec;
 #[cfg(test)]
 mod fail_closed_tests;
 pub mod quote;
+pub mod registry;
 pub mod ssh_config;
 pub mod state;
 pub mod target;
 
+pub use registry::RemoteRegistry;
 use ssh_config::SshHost;
 pub use state::RemoteState;
 use tauri::{AppHandle, State};
