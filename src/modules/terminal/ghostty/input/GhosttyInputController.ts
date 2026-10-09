@@ -203,6 +203,10 @@ export class GhosttyInputController {
     );
   }
 
+  isComposing(): boolean {
+    return this.composing;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

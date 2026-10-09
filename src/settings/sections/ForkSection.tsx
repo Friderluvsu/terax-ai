@@ -6,7 +6,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePreferencesStore } from "@/modules/settings/preferences";
+import { Switch } from "@/components/ui/switch";
 import {
+  setClickToMoveCursor,
   setLaunchCommandFiles,
   setTerminalDefaultMode,
   type TerminalDefaultMode,
@@ -22,6 +24,7 @@ const NEW_TAB_MODES: { value: TerminalDefaultMode; label: string }[] = [
 export function ForkSection() {
   const newTabMode = usePreferencesStore((s) => s.terminalDefaultMode);
   const launchCommandFiles = usePreferencesStore((s) => s.launchCommandFiles);
+  const clickToMoveCursor = usePreferencesStore((s) => s.clickToMoveCursor);
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,6 +75,15 @@ export function ForkSection() {
               <SelectItem value="edit">Open in editor</SelectItem>
             </SelectContent>
           </Select>
+        </SettingRow>
+        <SettingRow
+          title="Click to move cursor"
+          description="Click in the command line of a Classic tab to move the cursor there. Hold Option to move it without shell integration. Cmd+click opens a link inside the command line."
+        >
+          <Switch
+            checked={clickToMoveCursor}
+            onCheckedChange={(v) => void setClickToMoveCursor(v)}
+          />
         </SettingRow>
       </div>
     </div>

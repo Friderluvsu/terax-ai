@@ -31,6 +31,11 @@ import {
 } from "./gpu/terminalVisuals";
 import { getWebGpuTerminalRuntime } from "./gpu/WebGpuTerminalRuntime";
 import { WebGpuTerminalSurface } from "./gpu/WebGpuTerminalSurface";
+import {
+  cellClickDelta,
+  handleCellClick,
+  type CellClickDeps,
+} from "./input/cellClickCursor";
 import { GhosttyInputController } from "./input/GhosttyInputController";
 import { encodeTerminalSubmission } from "./input/terminalInputEncoding";
 import type {
@@ -716,6 +721,11 @@ async function initializeSessionGeneration(
     onOpenLink: (uri: string) => {
       void openExternalUrl(uri, () => focusGhosttySession(session.leafId));
     },
+    onCellClick: (cell, event) => {
+      handleCellClick(cellClickDeps(session, model), cell, event);
+    },
+    shouldOpenLink: (event, cell) =>
+      cellClickDelta(cellClickDeps(session, model), cell, event) === null,
   };
   session.surfaceOptions = surfaceBaseOptions;
   let webGpuFallbackStarted = false;
@@ -835,6 +845,28 @@ async function initializeSessionGeneration(
   if (model.cols !== startCols || model.rows !== startRows) {
     session.ptyResize.schedule(model.cols, model.rows);
   }
+}
+
+function cellClickDeps(
+  session: GhosttySession,
+  model: GhosttyTerminalModelApi,
+): CellClickDeps {
+  return {
+    model,
+    state: (altKey) => ({
+      enabled: usePreferencesStore.getState().clickToMoveCursor,
+      blocksPrompt: ghosttyBlocks(session.leafId)?.getMode() === "prompt",
+      alternateScreen: model.modes().alternateScreen,
+      mouseTracking: model.modes().mouseTracking,
+      scrollOffset: model.scrollPosition().offset,
+      composing: session.input?.isComposing() ?? false,
+      phase: session.promptTracker.phase(),
+      altKey,
+    }),
+    write: (bytes) => {
+      session.writer.enqueue(bytes);
+    },
+  };
 }
 
 function createGhosttyInput(

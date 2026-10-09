@@ -22,6 +22,10 @@ export type TerminalSelectionControllerOptions = {
   readonly cellSize: () => { readonly width: number; readonly height: number };
   readonly shouldIgnoreTarget: (target: EventTarget | null) => boolean;
   readonly onChange: () => void;
+  readonly onClick?: (
+    cell: { readonly row: number; readonly column: number },
+    event: PointerEvent,
+  ) => void;
 };
 
 export class TerminalSelectionController {
@@ -31,6 +35,7 @@ export class TerminalSelectionController {
   private mode: SelectionMode = "character";
   private pointerId: number | null = null;
   private meaningful = false;
+  private downDetail = 0;
   private lastClientX = 0;
   private lastClientY = 0;
   private autoScrollFrame: number | null = null;
@@ -143,6 +148,7 @@ export class TerminalSelectionController {
     event.preventDefault();
     event.stopPropagation();
     this.pointerId = event.pointerId;
+    this.downDetail = event.detail;
     this.options.target.setPointerCapture(event.pointerId);
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
@@ -178,6 +184,8 @@ export class TerminalSelectionController {
     if (event.pointerId !== this.pointerId) return;
     event.preventDefault();
     this.updateFocus(event);
+    const clicked =
+      !this.meaningful && event.button === 0 && this.downDetail <= 1;
     if (!this.meaningful) {
       this.selection = null;
       this.anchorRange = null;
@@ -189,6 +197,9 @@ export class TerminalSelectionController {
     }
     this.pointerId = null;
     this.stopAutoScroll();
+    if (!clicked) return;
+    const cell = this.cellFromClient(event.clientX, event.clientY);
+    if (cell) this.options.onClick?.(cell, event);
   };
 
   private updateFocus(
@@ -224,6 +235,35 @@ export class TerminalSelectionController {
       };
     }
     return { start: point.column, end: point.column };
+  }
+
+  private cellFromClient(
+    clientX: number,
+    clientY: number,
+  ): { readonly row: number; readonly column: number } | null {
+    const rect = this.options.target.getBoundingClientRect();
+    const cell = this.options.cellSize();
+    if (cell.width <= 0 || cell.height <= 0) return null;
+    if (
+      clientX < rect.left ||
+      clientX >= rect.right ||
+      clientY < rect.top ||
+      clientY >= rect.bottom
+    ) {
+      return null;
+    }
+    return {
+      column: clampInteger(
+        Math.floor((clientX - rect.left) / cell.width),
+        0,
+        this.options.model.cols - 1,
+      ),
+      row: clampInteger(
+        Math.floor((clientY - rect.top) / cell.height),
+        0,
+        this.options.model.rows - 1,
+      ),
+    };
   }
 
   private pointFromEvent(event: PointerEvent): TerminalBufferPoint | null {
