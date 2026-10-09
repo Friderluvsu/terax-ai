@@ -31,6 +31,8 @@ function baseContext(
     openNewTab: noop,
     openNewBlock: noop,
     openNewPrivate: noop,
+    sshHosts: [],
+    openSsh: noop,
     openNewEditor: noop,
     openNewPreview: noop,
     openGitGraph: noop,

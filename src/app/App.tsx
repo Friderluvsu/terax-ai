@@ -46,6 +46,7 @@ import {
 } from "@/modules/header";
 import { setLspNavigator } from "@/modules/lsp";
 import type { PreviewPaneHandle } from "@/modules/preview";
+import { buildSshCommand, useSshHosts } from "@/modules/remote";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setShowHidden } from "@/modules/settings/store";
@@ -327,6 +328,7 @@ export default function App() {
 
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const sshHosts = useSshHosts(commandPaletteOpen);
   const [paletteInitialMode, setPaletteInitialMode] = useState<
     "commands" | "content"
   >("commands");
@@ -595,6 +597,21 @@ export default function App() {
   const openNewPrivateTab = useCallback(() => {
     newPrivateTab(inheritedCwdForNewTab());
   }, [newPrivateTab, inheritedCwdForNewTab]);
+
+  const openSshTab = useCallback(
+    (alias: string) => {
+      const command = buildSshCommand(alias);
+      if (!command) return;
+      const { leafId } = newPrivateTab(inheritedCwdForNewTab());
+      void (async () => {
+        await whenSessionReady(leafId);
+        if (!writeToSession(leafId, command)) {
+          console.error(`[terax] ssh terminal ${leafId} closed before launch`);
+        }
+      })();
+    },
+    [newPrivateTab, inheritedCwdForNewTab],
+  );
 
   const openNewBlockTab = useCallback(() => {
     newBlockTab(inheritedCwdForNewTab());
@@ -1260,6 +1277,8 @@ export default function App() {
             openNewTab,
             openNewBlock: openNewBlockTab,
             openNewPrivate: openNewPrivateTab,
+            sshHosts,
+            openSsh: openSshTab,
             openNewEditor: () => setNewEditorOpen(true),
             openNewPreview: () => openPreviewTab(""),
             openGitGraph: openGitGraphFromContext,
@@ -1292,6 +1311,8 @@ export default function App() {
       openNewTab,
       openNewBlockTab,
       openNewPrivateTab,
+      sshHosts,
+      openSshTab,
       openPreviewTab,
       openGitGraphFromContext,
       toggleSourceControl,
@@ -1403,6 +1424,7 @@ export default function App() {
               onNewPreview={() => openPreviewTab("")}
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
+              onNewSsh={openSshTab}
               onLaunchAgents={launchAgentGroup}
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}

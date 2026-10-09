@@ -8,6 +8,7 @@ pub mod history;
 pub mod lsp;
 pub mod net;
 pub mod proc;
+pub mod remote;
 pub mod pty;
 pub mod secrets;
 pub mod security;

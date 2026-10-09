@@ -826,7 +826,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       },
     ]);
     setActiveId(tabId);
-    return tabId;
+    return { tabId, leafId };
   }, []);
 
   /**
