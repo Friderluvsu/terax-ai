@@ -82,6 +82,7 @@ import {
   useWindowTitle,
   useWorkspaceCwd,
 } from "@/modules/tabs";
+import { resolveNewTabKind } from "@/modules/tabs/lib/newTabMode";
 import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
 import {
   clearFocusedTerminal,
@@ -589,16 +590,26 @@ export default function App() {
   const askPresence = usePresence(Boolean(askPopup), 120);
 
   const openNewTab = useCallback(() => {
-    newTab(inheritedCwdForNewTab());
-  }, [newTab, inheritedCwdForNewTab]);
+    const kind = resolveNewTabKind(
+      usePreferencesStore.getState().terminalDefaultMode,
+      "default",
+    );
+    if (kind === "blocks") newBlockTab(inheritedCwdForNewTab());
+    else newTab(inheritedCwdForNewTab());
+  }, [newTab, newBlockTab, inheritedCwdForNewTab]);
 
   const openNewPrivateTab = useCallback(() => {
     newPrivateTab(inheritedCwdForNewTab());
   }, [newPrivateTab, inheritedCwdForNewTab]);
 
   const openNewBlockTab = useCallback(() => {
-    newBlockTab(inheritedCwdForNewTab());
-  }, [newBlockTab, inheritedCwdForNewTab]);
+    const kind = resolveNewTabKind(
+      usePreferencesStore.getState().terminalDefaultMode,
+      "alternate",
+    );
+    if (kind === "blocks") newBlockTab(inheritedCwdForNewTab());
+    else newTab(inheritedCwdForNewTab());
+  }, [newTab, newBlockTab, inheritedCwdForNewTab]);
 
   const launchAgentGroup = useCallback(
     (request: AgentLaunchRequest) => {
