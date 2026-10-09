@@ -110,11 +110,17 @@ struct ChangedPayload {
     env: String,
 }
 
-fn envs_for_path(refcounts: &HashMap<PathBuf, HashMap<String, usize>>, path: &str) -> Vec<String> {
-    let p = Path::new(path);
-    let owners = refcounts
-        .get(p)
-        .or_else(|| p.parent().and_then(|parent| refcounts.get(parent)));
+// Event paths arrive as `to_canon` strings (`C:/dir/file`) while refcount keys
+// are raw canonical paths (`\\?\C:\dir` on Windows), so keys are normalized with
+// `norm` before comparing. Pure in `norm` so the Windows shape is testable anywhere.
+fn envs_for_path(
+    owners_by_key: &HashMap<String, &HashMap<String, usize>>,
+    path: &str,
+) -> Vec<String> {
+    let owners = owners_by_key.get(path).or_else(|| {
+        path.rsplit_once('/')
+            .and_then(|(parent, _)| owners_by_key.get(parent))
+    });
     match owners {
         Some(map) if !map.is_empty() => map.keys().cloned().collect(),
         _ => vec![LOCAL_ENV.to_string()],
@@ -124,10 +130,13 @@ fn envs_for_path(refcounts: &HashMap<PathBuf, HashMap<String, usize>>, path: &st
 fn group_by_env(
     refcounts: &HashMap<PathBuf, HashMap<String, usize>>,
     paths: HashSet<String>,
+    norm: impl Fn(&Path) -> String,
 ) -> HashMap<String, Vec<String>> {
+    let owners_by_key: HashMap<String, &HashMap<String, usize>> =
+        refcounts.iter().map(|(k, v)| (norm(k), v)).collect();
     let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
     for path in paths {
-        for env in envs_for_path(refcounts, &path) {
+        for env in envs_for_path(&owners_by_key, &path) {
             grouped.entry(env).or_default().push(path.clone());
         }
     }
@@ -192,8 +201,8 @@ fn drain_loop(rx: mpsc::Receiver<notify::Result<Event>>, app: AppHandle) {
             let state = app.state::<FsWatchState>();
             let guard = state.inner.lock().expect("fs watch state poisoned");
             match guard.as_ref() {
-                Some(inner) => group_by_env(&inner.refcounts, paths),
-                None => group_by_env(&HashMap::new(), paths),
+                Some(inner) => group_by_env(&inner.refcounts, paths, |p| to_canon(p)),
+                None => group_by_env(&HashMap::new(), paths, |p| to_canon(p)),
             }
         };
         for (env, paths) in grouped {
@@ -401,11 +410,36 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let grouped = group_by_env(&refcounts, paths);
+        let grouped = group_by_env(&refcounts, paths, |p| to_canon(p));
         let mut local = grouped["local"].clone();
         local.sort();
         assert_eq!(local, vec!["/a/x".to_string(), "/c/z".to_string()]);
         assert_eq!(grouped["wsl:Ubuntu"], vec!["/b/y".to_string()]);
+    }
+
+    #[test]
+    fn windows_verbatim_keys_still_find_their_owner() {
+        let mut refcounts: HashMap<PathBuf, HashMap<String, usize>> = HashMap::new();
+        refcounts.insert(
+            PathBuf::from(r"\\?\UNC\wsl.localhost\Ubuntu\home\u"),
+            HashMap::from([("wsl:Ubuntu".to_string(), 1)]),
+        );
+        refcounts.insert(
+            PathBuf::from(r"\\?\C:\dir"),
+            HashMap::from([("local".to_string(), 1)]),
+        );
+        let paths: HashSet<String> = ["//wsl.localhost/Ubuntu/home/u/f", "C:/dir/file"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let grouped = group_by_env(&refcounts, paths, |p| {
+            crate::modules::fs::strip_verbatim(&p.to_string_lossy())
+        });
+        assert_eq!(
+            grouped["wsl:Ubuntu"],
+            vec!["//wsl.localhost/Ubuntu/home/u/f".to_string()]
+        );
+        assert_eq!(grouped["local"], vec!["C:/dir/file".to_string()]);
     }
 
     #[test]

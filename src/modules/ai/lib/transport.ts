@@ -80,9 +80,20 @@ type SendOptions = {
 };
 
 export function createContextAwareTransport(deps: Deps) {
+  // The env is bound once per user turn. Approval continuations (last message is
+  // the assistant's) reuse it so an approved write runs where it was proposed.
+  let bound: ReturnType<typeof bindRunContext> | null = null;
+  const bindFor = (messages: UIMessage[]) => {
+    const last = messages[messages.length - 1];
+    if (!bound || !last || last.role === "user") {
+      bound = bindRunContext(deps.toolContext, deps.getEnv());
+    }
+    return bound;
+  };
+
   const run = async (options: SendOptions) => {
     const live = deps.getLive();
-    const toolContext = bindRunContext(deps.toolContext, deps.getEnv());
+    const toolContext = bindFor(options.messages);
     const projectMemory = await readTeraxMd(
       live.workspaceRoot,
       toolContext.native,
@@ -127,6 +138,8 @@ export function createContextAwareTransport(deps: Deps) {
 
   return {
     sendMessages: run,
+    /** Env of the current turn; falls back to the active one before any run. */
+    getRunEnv: (): WorkspaceEnv => bound?.env ?? deps.getEnv(),
     async reconnectToStream(): Promise<null> {
       return null;
     },

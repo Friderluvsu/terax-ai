@@ -7,6 +7,7 @@ import { getModel, providerNeedsKey, type ModelId } from "../config";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { BUILTIN_AGENTS } from "../lib/agents";
 import { useAgentsStore } from "./agentsStore";
+import type { WorkspaceEnv } from "@/modules/workspace";
 import { usePlanStore } from "./planStore";
 import { createContextAwareTransport } from "../lib/transport";
 import type { BaseToolContext } from "../lib/runContext";
@@ -19,6 +20,13 @@ import {
   touchChat,
   useChatStore,
 } from "./chatStore";
+
+const runEnvGetters = new Map<string, () => WorkspaceEnv>();
+
+/** Env bound to the session's current turn (for approval diffs). */
+export function getChatRunEnv(sessionId: string): WorkspaceEnv | null {
+  return runEnvGetters.get(sessionId)?.() ?? null;
+}
 
 function makeChat(sessionId: string): Chat<UIMessage> {
   const readCache = new Map<string, { size: number; hash: number }>();
@@ -39,7 +47,7 @@ function makeChat(sessionId: string): Chat<UIMessage> {
     getSessionId: () => sessionId,
   };
 
-  const transport = createContextAwareTransport({
+  const ctxTransport = createContextAwareTransport({
     getKeys: () => useChatStore.getState().apiKeys,
     toolContext,
     getEnv: () => {
@@ -104,7 +112,9 @@ function makeChat(sessionId: string): Chat<UIMessage> {
         lastCachedTokens: delta.lastCachedTokens,
       });
     },
-  }) as unknown as ChatTransport<UIMessage>;
+  });
+  runEnvGetters.set(sessionId, ctxTransport.getRunEnv);
+  const transport = ctxTransport as unknown as ChatTransport<UIMessage>;
 
   const initialMessages = seedMessages.get(sessionId);
   seedMessages.delete(sessionId);

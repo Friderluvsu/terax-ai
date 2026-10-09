@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { Native } from "../lib/native";
+import type { WorkspaceEnv } from "@/modules/workspace";
 import { checkWritableCanonical } from "../lib/security";
 import { newQueuedEditId, usePlanStore } from "../store/planStore";
 import { resolvePath, type ToolContext } from "./context";
@@ -17,6 +18,7 @@ function djb2(s: string): number {
 
 async function applyEdits(
   native: Native,
+  env: WorkspaceEnv,
   abs: string,
   edits: { old_string: string; new_string: string; replace_all?: boolean }[],
   kind: "edit" | "multi_edit",
@@ -91,6 +93,7 @@ async function applyEdits(
       id: newQueuedEditId(),
       kind,
       path: abs,
+      env,
       originalContent: original,
       proposedContent: content,
       isNewFile: false,
@@ -151,6 +154,7 @@ export function buildEditTools(ctx: ToolContext) {
         }
         return applyEdits(
           native,
+          ctx.env,
           abs,
           [{ old_string, new_string, replace_all }],
           "edit",
@@ -190,7 +194,7 @@ export function buildEditTools(ctx: ToolContext) {
             path: abs,
           };
         }
-        return applyEdits(native, abs, edits, "multi_edit", ctx.readCache);
+        return applyEdits(native, ctx.env, abs, edits, "multi_edit", ctx.readCache);
       },
     }),
   } as const;

@@ -24,7 +24,7 @@ pub fn to_canon(p: impl AsRef<Path>) -> String {
 
 // Pure so it stays unit-testable on any host. `\\?\C:\x` -> `C:/x`.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn strip_verbatim(s: &str) -> String {
+pub(crate) fn strip_verbatim(s: &str) -> String {
     let stripped = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else if let Some(rest) = s.strip_prefix(r"\\?\") {

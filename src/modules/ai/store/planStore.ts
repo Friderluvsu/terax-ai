@@ -1,11 +1,14 @@
 import { create } from "zustand";
-import { native } from "../lib/native";
+import type { WorkspaceEnv } from "@/modules/workspace";
+import { createNative } from "../lib/native";
 
 export type QueuedEdit = {
   id: string;
   /** Tool that produced the queued mutation. */
   kind: "write_file" | "edit" | "multi_edit" | "create_directory";
   path: string;
+  /** Environment the edit was computed under; applied against the same one. */
+  env: WorkspaceEnv;
   /** Original file content (empty for new files / create_directory). */
   originalContent: string;
   /** Proposed full content after edit (empty for create_directory). */
@@ -50,6 +53,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     const results: { id: string; ok: boolean; error?: string }[] = [];
     for (const q of items) {
       try {
+        const native = createNative(() => q.env);
         if (q.kind === "create_directory") {
           await native.createDir(q.path);
         } else {
