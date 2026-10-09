@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::modules::fs::{file, mutate, watch};
+use crate::modules::fs::watch;
 use crate::modules::git::{operations, utils};
 use crate::modules::shell::{background, build_oneshot_command, run_blocking_inner, session};
 use crate::modules::workspace::{
@@ -41,10 +41,6 @@ impl Fixture {
 
     fn root_str(&self) -> String {
         s(&self.root)
-    }
-
-    fn file_str(&self) -> String {
-        s(&self.file)
     }
 
     fn registry(&self) -> WorkspaceRegistry {
@@ -117,46 +113,13 @@ fn workspace_auth_rejects_ssh() {
     assert!(!fresh.is_authorized(&fx.root));
 }
 
+// File writes and mutations are served over SFTP (remote::fs::dispatch);
+// the watcher is not ported yet and must still fail closed.
 #[test]
-fn fs_writes_reject_ssh() {
+fn fs_watch_rejects_ssh() {
     let fx = Fixture::new();
     let reg = fx.registry();
     let root = fx.root_str();
-    let f = fx.file_str();
-    let dir = fx.root.join("sub");
-
-    assert_ssh_err(file::write_file_sync(&f, "remote\n", &ssh()));
-    assert_ssh_err(mutate::fs_create_file(
-        s(&fx.root.join("new.txt")),
-        Some(ssh()),
-    ));
-    assert_ssh_err(mutate::fs_create_dir(s(&dir.join("new")), Some(ssh())));
-    assert_ssh_err(mutate::fs_rename(
-        f.clone(),
-        s(&fx.root.join("renamed.txt")),
-        Some(ssh()),
-    ));
-    assert_ssh_err(mutate::fs_delete(f.clone(), Some(ssh())));
-
-    let outside = tempfile::tempdir().expect("source dir");
-    let source = outside.path().join("copied.txt");
-    fs::write(&source, "copy").expect("source file");
-    assert_ssh_err(mutate::fs_copy(vec![s(&source)], s(&dir), Some(ssh())));
-
-    assert_ssh_err(mutate::resolve_authorized_root(&root, &ssh(), &reg));
-    assert_ssh_err(mutate::fs_move_impl(
-        &f,
-        &s(&dir.join("moved.txt")),
-        &fx.root,
-        None,
-        &ssh(),
-    ));
-    let batch = mutate::fs_delete_batch_impl(vec![f.clone()], &fx.root, &ssh());
-    assert_eq!(
-        serde_json::to_value(batch).expect("batch json"),
-        serde_json::json!({ "deleted": [], "failed": 1 })
-    );
-
     assert_ssh_err(watch::prepare_add(&reg, &ssh(), vec![root.clone()]));
     assert_ssh_err(watch::prepare_remove(&ssh(), vec![root]));
     fx.assert_untouched();

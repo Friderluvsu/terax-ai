@@ -1,6 +1,6 @@
 use super::{
-    join, mtime_millis, sibling_name, split_parent, validate_path, EntryKind, FsError, ReadOutcome,
-    RemoteEntry, RemoteFs, RemoteMetadata, SetAttrs,
+    join, mtime_millis, nonce, sibling_name, split_parent, validate_path, EntryKind, FsError,
+    ReadOutcome, RemoteEntry, RemoteFs, RemoteMetadata, SetAttrs,
 };
 use crate::modules::remote::control::{build_args, control_path, ssh_binary, Mode};
 use crate::modules::remote::exec::kill_group;
@@ -121,14 +121,16 @@ fn encode_strings(items: &[&str]) -> Vec<u8> {
     out
 }
 
-fn nonce() -> Result<String, FsError> {
-    let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).map_err(|e| FsError::Failure(format!("random name: {e}")))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
 fn chunk_len(limit: Option<u64>) -> u64 {
     limit.map_or(DEFAULT_CHUNK, |l| l.min(MAX_CHUNK)).max(1)
+}
+
+/// Keeps the last `MAX_STDERR` bytes: the real error follows any banners.
+fn keep_tail(buf: &mut Vec<u8>, data: &[u8]) {
+    buf.extend_from_slice(data);
+    if buf.len() > MAX_STDERR {
+        buf.drain(..buf.len() - MAX_STDERR);
+    }
 }
 
 async fn drain_stderr(mut pipe: ChildStderr, buf: Arc<Mutex<Vec<u8>>>) {
@@ -136,11 +138,7 @@ async fn drain_stderr(mut pipe: ChildStderr, buf: Arc<Mutex<Vec<u8>>>) {
     loop {
         match pipe.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
-            Ok(n) => {
-                let mut b = lock(&buf);
-                let room = MAX_STDERR.saturating_sub(b.len());
-                b.extend_from_slice(&chunk[..n.min(room)]);
-            }
+            Ok(n) => keep_tail(&mut lock(&buf), &chunk[..n]),
         }
     }
 }
@@ -441,11 +439,20 @@ impl SftpConn {
         }
     }
 
-    /// Without posix-rename the old file moves to a backup first, so a failed
-    /// swap can be undone; the window between the two renames is not atomic.
+    /// Moves `tmp` over `path` and owns `tmp` cleanup. Without posix-rename
+    /// the old file moves to a backup first, so a failed swap can be undone;
+    /// the window between the two renames is not atomic. When the undo also
+    /// fails nothing is deleted and the error names the backup.
     async fn replace(&self, tmp: &str, path: &str, backup: &str) -> Result<(), FsError> {
+        let discard_tmp = |e: FsError| async move {
+            let _ = self.raw.remove(tmp).await;
+            e
+        };
         if self.posix_rename {
-            return self.posix_rename_to(tmp, path).await;
+            return match self.posix_rename_to(tmp, path).await {
+                Ok(()) => Ok(()),
+                Err(e) => Err(discard_tmp(e).await),
+            };
         }
         let rename = |from: &str, to: &str| {
             let (from, to) = (from.to_string(), to.to_string());
@@ -457,20 +464,34 @@ impl SftpConn {
                     .map_err(|e| map_err(e, &to))
             }
         };
-        if self.lstat_opt(path).await?.is_none() {
-            return rename(tmp, path).await;
+        let exists = match self.lstat_opt(path).await {
+            Ok(m) => m.is_some(),
+            Err(e) => return Err(discard_tmp(e).await),
+        };
+        if !exists {
+            return match rename(tmp, path).await {
+                Ok(()) => Ok(()),
+                Err(e) => Err(discard_tmp(e).await),
+            };
         }
-        rename(path, backup).await?;
+        if let Err(e) = rename(path, backup).await {
+            return Err(discard_tmp(e).await);
+        }
         if let Err(e) = rename(tmp, path).await {
-            let _ = rename(backup, path).await;
-            return Err(e);
+            if rename(backup, path).await.is_ok() {
+                return Err(discard_tmp(e).await);
+            }
+            return Err(FsError::Failure(format!(
+                "{path}: save failed ({e}) and the previous content could not be restored; \
+                 it is kept in {backup}, the new content in {tmp}"
+            )));
         }
         let _ = self.raw.remove(backup).await;
         Ok(())
     }
 
     #[cfg(test)]
-    fn without_posix_rename(mut self) -> Self {
+    pub(crate) fn without_posix_rename(mut self) -> Self {
         self.posix_rename = false;
         self
     }
@@ -551,12 +572,52 @@ impl RemoteFs for SftpConn {
         let backup = join(parent, &sibling_name(name, &nonce, "bak"));
         self.write_temp(&tmp, path, data, existing.and_then(|m| m.mode))
             .await?;
-        if let Err(e) = self.replace(&tmp, path, &backup).await {
-            let _ = self.raw.remove(tmp.as_str()).await;
-            return Err(e);
-        }
+        self.replace(&tmp, path, &backup).await?;
         let attrs = self.raw.stat(path).await.map_err(|e| map_err(e, path))?;
         Ok(metadata(&attrs.attrs))
+    }
+
+    async fn write_new(&self, path: &str, data: &[u8], mode: Option<u32>) -> Result<(), FsError> {
+        validate_path(path)?;
+        self.write_temp(path, path, data, mode).await
+    }
+
+    async fn write_in_place(&self, path: &str, data: &[u8]) -> Result<(), FsError> {
+        validate_path(path)?;
+        let handle = self
+            .raw
+            .open(
+                path,
+                OpenFlags::WRITE | OpenFlags::TRUNCATE,
+                FileAttributes::empty(),
+            )
+            .await
+            .map_err(|e| map_err(e, path))?
+            .handle;
+        let filled = self.fill(&handle, path, data, None).await;
+        let closed = self
+            .raw
+            .close(handle)
+            .await
+            .map(drop)
+            .map_err(|e| map_err(e, path));
+        filled.and(closed)
+    }
+
+    async fn lstat(&self, path: &str) -> Result<RemoteMetadata, FsError> {
+        validate_path(path)?;
+        self.lstat_opt(path)
+            .await?
+            .ok_or_else(|| FsError::NotFound(path.to_string()))
+    }
+
+    async fn posix_rename(&self, from: &str, to: &str) -> Result<(), FsError> {
+        validate_path(from)?;
+        validate_path(to)?;
+        if !self.posix_rename {
+            return Err(FsError::Unsupported(POSIX_RENAME.into()));
+        }
+        self.posix_rename_to(from, to).await
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FsError> {
@@ -638,9 +699,17 @@ impl RemoteFs for SftpConn {
     }
 }
 
+#[derive(Default)]
+struct Current {
+    conn: Option<Arc<SftpConn>>,
+    /// Bumped by `reset` so a connect that was in flight during a
+    /// disconnect does not install its session afterwards.
+    generation: u64,
+}
+
 struct HostSlot {
     launch: Launch,
-    current: Mutex<Option<Arc<SftpConn>>>,
+    current: Mutex<Current>,
     connecting: tokio::sync::Mutex<()>,
     closed: Arc<AtomicBool>,
 }
@@ -648,25 +717,45 @@ struct HostSlot {
 impl HostSlot {
     fn live(&self) -> Option<Arc<SftpConn>> {
         let mut cur = lock(&self.current);
-        if cur.as_ref().is_some_and(|c| c.is_alive()) {
-            return cur.clone();
+        if cur.conn.as_ref().is_some_and(|c| c.is_alive()) {
+            return cur.conn.clone();
         }
-        if let Some(dead) = cur.take() {
+        if let Some(dead) = cur.conn.take() {
             dead.kill();
         }
         None
     }
 
+    fn generation(&self) -> u64 {
+        lock(&self.current).generation
+    }
+
+    /// Installs a fresh session unless the pool shut down or the host was
+    /// reset since `generation` was read. Checked under the same lock that
+    /// `reset` takes, so a session can never be stored after either.
+    fn install(&self, conn: &Arc<SftpConn>, generation: u64) -> bool {
+        let mut cur = lock(&self.current);
+        if self.closed.load(Ordering::Acquire) || cur.generation != generation {
+            drop(cur);
+            conn.kill();
+            return false;
+        }
+        cur.conn = Some(conn.clone());
+        true
+    }
+
     fn reset(&self) {
-        if let Some(conn) = lock(&self.current).take() {
+        let mut cur = lock(&self.current);
+        cur.generation = cur.generation.wrapping_add(1);
+        if let Some(conn) = cur.conn.take() {
             conn.kill();
         }
     }
 
     fn invalidate(&self, conn: &Arc<SftpConn>) {
         let mut cur = lock(&self.current);
-        if cur.as_ref().is_some_and(|c| Arc::ptr_eq(c, conn)) {
-            *cur = None;
+        if cur.conn.as_ref().is_some_and(|c| Arc::ptr_eq(c, conn)) {
+            cur.conn = None;
         }
         conn.kill();
     }
@@ -692,14 +781,13 @@ impl SftpHost {
                 "remote sessions are shut down".into(),
             ));
         }
+        let generation = self.slot.generation();
         let conn = Arc::new(SftpConn::connect(&self.slot.launch).await?);
-        if self.slot.closed.load(Ordering::Acquire) {
-            conn.kill();
+        if !self.slot.install(&conn, generation) {
             return Err(FsError::Disconnected(
-                "remote sessions are shut down".into(),
+                "remote session was closed while connecting".into(),
             ));
         }
-        *lock(&self.slot.current) = Some(conn.clone());
         Ok(conn)
     }
 
@@ -735,7 +823,7 @@ impl SftpHost {
 
     #[cfg(test)]
     fn current(&self) -> Option<Arc<SftpConn>> {
-        lock(&self.slot.current).clone()
+        lock(&self.slot.current).conn.clone()
     }
 }
 
@@ -759,6 +847,34 @@ impl RemoteFs for SftpHost {
         self.run(
             false,
             move |c| async move { c.write_atomic(path, data).await },
+        )
+        .await
+    }
+
+    async fn write_new(&self, path: &str, data: &[u8], mode: Option<u32>) -> Result<(), FsError> {
+        self.run(false, move |c| async move {
+            c.write_new(path, data, mode).await
+        })
+        .await
+    }
+
+    async fn write_in_place(&self, path: &str, data: &[u8]) -> Result<(), FsError> {
+        self.run(
+            false,
+            move |c| async move { c.write_in_place(path, data).await },
+        )
+        .await
+    }
+
+    async fn lstat(&self, path: &str) -> Result<RemoteMetadata, FsError> {
+        self.run(true, move |c| async move { c.lstat(path).await })
+            .await
+    }
+
+    async fn posix_rename(&self, from: &str, to: &str) -> Result<(), FsError> {
+        self.run(
+            false,
+            move |c| async move { c.posix_rename(from, to).await },
         )
         .await
     }
@@ -814,7 +930,7 @@ impl SftpPool {
         }
         let slot = Arc::new(HostSlot {
             launch: launch()?,
-            current: Mutex::new(None),
+            current: Mutex::new(Current::default()),
             connecting: tokio::sync::Mutex::new(()),
             closed: self.closed.clone(),
         });
@@ -950,6 +1066,16 @@ mod tests {
         assert_eq!(chunk_len(None), DEFAULT_CHUNK);
         assert_eq!(chunk_len(Some(1 << 20)), MAX_CHUNK);
         assert_eq!(chunk_len(Some(1000)), 1000);
+    }
+
+    #[test]
+    fn stderr_keeps_the_latest_output() {
+        let mut buf = Vec::new();
+        keep_tail(&mut buf, &[b'x'; MAX_STDERR]);
+        keep_tail(&mut buf, b"real error");
+        assert_eq!(buf.len(), MAX_STDERR);
+        assert!(buf.ends_with(b"real error"));
+        assert_eq!(buf[0], b'x');
     }
 
     #[test]
@@ -1298,6 +1424,32 @@ mod server_tests {
             assert!(exited(&third).await);
             assert!(host.stat(&root).await.unwrap_err().is_connection());
             assert!(pool.host("other", || Ok(launch.clone())).is_err());
+        });
+    }
+
+    #[test]
+    fn connect_racing_disconnect_or_shutdown_is_discarded() {
+        let launch = server_or_skip!();
+        rt().block_on(async {
+            let pool = SftpPool::default();
+            let host = pool.host("local", || Ok(launch.clone())).unwrap();
+
+            let generation = host.slot.generation();
+            let late = Arc::new(SftpConn::connect(&launch).await.unwrap());
+            pool.disconnect("local");
+            assert!(!host.slot.install(&late, generation));
+            assert!(exited(&late).await);
+            assert!(host.current().is_none());
+
+            let generation = host.slot.generation();
+            let live = Arc::new(SftpConn::connect(&launch).await.unwrap());
+            assert!(host.slot.install(&live, generation));
+            let late = Arc::new(SftpConn::connect(&launch).await.unwrap());
+            pool.shutdown();
+            assert!(!host.slot.install(&late, generation));
+            assert!(exited(&late).await);
+            assert!(exited(&live).await);
+            assert!(host.current().is_none());
         });
     }
 

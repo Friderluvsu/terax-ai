@@ -26,7 +26,7 @@ pub fn normalize_posix(path: &str) -> Result<String, String> {
     Ok(format!("/{}", parts.join("/")))
 }
 
-fn is_under(root: &str, path: &str) -> bool {
+pub fn is_under(root: &str, path: &str) -> bool {
     root == "/"
         || path == root
         || path

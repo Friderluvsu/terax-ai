@@ -1,7 +1,10 @@
+use crate::modules::remote::fs::dispatch::{self, Scope};
+use crate::modules::remote::RemoteRegistry;
 use crate::modules::workspace::{local_path, WorkspaceEnv, WorkspaceRegistry};
 use serde::Serialize;
 use std::io;
 use std::path::Path;
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(
@@ -17,8 +20,8 @@ pub enum FsMoveResult {
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FsDeleteBatchResult {
-    deleted: Vec<String>,
-    failed: usize,
+    pub(crate) deleted: Vec<String>,
+    pub(crate) failed: usize,
 }
 
 fn metadata_if_exists(path: &Path) -> io::Result<Option<std::fs::Metadata>> {
@@ -219,9 +222,22 @@ fn remove_path(path: &Path) -> io::Result<()> {
 
 /// Creates a new empty file. Fails if the file already exists.
 #[tauri::command]
-pub fn fs_create_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
+pub async fn fs_create_file(
+    path: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = local_path(&path, &workspace)?;
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        let registry = app.state::<RemoteRegistry>();
+        return dispatch::create_file(&fs, &Scope::host(&registry, host), &path).await;
+    }
+    create_file_local(&path, &workspace)
+}
+
+pub(crate) fn create_file_local(path: &str, workspace: &WorkspaceEnv) -> Result<(), String> {
+    let p = local_path(path, workspace)?;
     if p.exists() {
         return Err(format!("already exists: {}", p.display()));
     }
@@ -235,9 +251,22 @@ pub fn fs_create_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<(
 /// Parents are created as needed — matches the common "new folder" UX
 /// where typing "a/b/c" creates the full chain.
 #[tauri::command]
-pub fn fs_create_dir(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
+pub async fn fs_create_dir(
+    path: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = local_path(&path, &workspace)?;
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        let registry = app.state::<RemoteRegistry>();
+        return dispatch::create_dir(&fs, &Scope::host(&registry, host), &path).await;
+    }
+    create_dir_local(&path, &workspace)
+}
+
+pub(crate) fn create_dir_local(path: &str, workspace: &WorkspaceEnv) -> Result<(), String> {
+    let p = local_path(path, workspace)?;
     if p.exists() {
         return Err(format!("already exists: {}", p.display()));
     }
@@ -249,10 +278,24 @@ pub fn fs_create_dir(path: String, workspace: Option<WorkspaceEnv>) -> Result<()
 
 /// Renames (or moves) a path. Refuses to overwrite an existing target.
 #[tauri::command]
-pub fn fs_rename(from: String, to: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
+pub async fn fs_rename(
+    from: String,
+    to: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let from_p = local_path(&from, &workspace)?;
-    let to_p = local_path(&to, &workspace)?;
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        let registry = app.state::<RemoteRegistry>();
+        return dispatch::rename(&fs, &Scope::host(&registry, host), &from, &to).await;
+    }
+    rename_local(&from, &to, &workspace)
+}
+
+pub(crate) fn rename_local(from: &str, to: &str, workspace: &WorkspaceEnv) -> Result<(), String> {
+    let from_p = local_path(from, workspace)?;
+    let to_p = local_path(to, workspace)?;
     if !from_p.exists() {
         return Err(format!("not found: {}", from_p.display()));
     }
@@ -271,15 +314,24 @@ pub fn fs_rename(from: String, to: String, workspace: Option<WorkspaceEnv>) -> R
 
 /// Moves a path without clobbering unless replacement was explicitly approved.
 #[tauri::command]
-pub fn fs_move(
+pub async fn fs_move(
     from: String,
     to: String,
     root: String,
     expected_conflict: Option<String>,
     workspace: Option<WorkspaceEnv>,
-    registry: tauri::State<'_, WorkspaceRegistry>,
+    app: AppHandle,
 ) -> Result<FsMoveResult, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        let registry = app.state::<RemoteRegistry>();
+        let scope = dispatch::authorized_root(&fs, &registry, host, &root).await?;
+        let mv = |from, to| dispatch::mv_force(&app, host, from, to);
+        return dispatch::move_entry(&fs, &scope, &from, &to, expected_conflict.as_deref(), mv)
+            .await;
+    }
+    let registry = app.state::<WorkspaceRegistry>();
     let root = resolve_authorized_root(&root, &workspace, &registry)?;
     fs_move_impl(&from, &to, &root, expected_conflict.as_deref(), &workspace)
 }
@@ -343,9 +395,22 @@ pub(crate) fn fs_move_impl(
 /// Deletes a file or directory (recursively for dirs). Callers are
 /// responsible for confirming destructive operations with the user.
 #[tauri::command]
-pub fn fs_delete(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), String> {
+pub async fn fs_delete(
+    path: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let p = local_path(&path, &workspace)?;
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        let registry = app.state::<RemoteRegistry>();
+        return dispatch::delete(&fs, &Scope::host(&registry, host), &path).await;
+    }
+    delete_local(&path, &workspace)
+}
+
+pub(crate) fn delete_local(path: &str, workspace: &WorkspaceEnv) -> Result<(), String> {
+    let p = local_path(path, workspace)?;
     remove_path(&p).map_err(|e| {
         log::warn!("fs_delete({}) failed: {e}", p.display());
         e.to_string()
@@ -353,20 +418,44 @@ pub fn fs_delete(path: String, workspace: Option<WorkspaceEnv>) -> Result<(), St
 }
 
 #[tauri::command]
-pub fn fs_delete_batch(
+pub async fn fs_delete_batch(
     paths: Vec<String>,
     root: String,
     workspace: Option<WorkspaceEnv>,
-    registry: tauri::State<'_, WorkspaceRegistry>,
-) -> FsDeleteBatchResult {
+    app: AppHandle,
+) -> Result<FsDeleteBatchResult, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let Ok(root) = resolve_authorized_root(&root, &workspace, &registry) else {
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let all_failed = FsDeleteBatchResult {
+            deleted: Vec::new(),
+            failed: paths.len(),
+        };
+        let Ok(fs) = dispatch::host_fs(&app, host) else {
+            return Ok(all_failed);
+        };
+        let registry = app.state::<RemoteRegistry>();
+        let Ok(scope) = dispatch::authorized_root(&fs, &registry, host, &root).await else {
+            return Ok(all_failed);
+        };
+        return Ok(dispatch::delete_batch(&fs, &scope, paths).await);
+    }
+    let registry = app.state::<WorkspaceRegistry>();
+    Ok(delete_batch_local(paths, &root, &workspace, &registry))
+}
+
+fn delete_batch_local(
+    paths: Vec<String>,
+    root: &str,
+    workspace: &WorkspaceEnv,
+    registry: &WorkspaceRegistry,
+) -> FsDeleteBatchResult {
+    let Ok(root) = resolve_authorized_root(root, workspace, registry) else {
         return FsDeleteBatchResult {
             deleted: Vec::new(),
             failed: paths.len(),
         };
     };
-    fs_delete_batch_impl(paths, &root, &workspace)
+    fs_delete_batch_impl(paths, &root, workspace)
 }
 
 pub(crate) fn fs_delete_batch_impl(
@@ -409,14 +498,28 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 /// dirs. Sources are absolute OS paths (from a drag-drop); only the destination
 /// is workspace-resolved. Refuses to overwrite existing entries.
 #[tauri::command]
-pub fn fs_copy(
+pub async fn fs_copy(
     sources: Vec<String>,
     dest_dir: String,
     workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
 ) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let dest = local_path(&dest_dir, &workspace)?;
-    for source in &sources {
+    if let WorkspaceEnv::Ssh { host } = &workspace {
+        let fs = dispatch::host_fs(&app, host)?;
+        let registry = app.state::<RemoteRegistry>();
+        return dispatch::upload(&fs, &Scope::host(&registry, host), &sources, &dest_dir).await;
+    }
+    copy_local(&sources, &dest_dir, &workspace)
+}
+
+pub(crate) fn copy_local(
+    sources: &[String],
+    dest_dir: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<(), String> {
+    let dest = local_path(dest_dir, workspace)?;
+    for source in sources {
         let src = std::path::PathBuf::from(source);
         let name = src
             .file_name()
@@ -472,13 +575,13 @@ mod tests {
     fn create_file_makes_empty_and_refuses_to_clobber() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("new.txt");
-        fs_create_file(s(f.clone()), None).expect("create");
+        create_file_local(&s(f.clone()), &WorkspaceEnv::Local).expect("create");
         assert!(f.exists());
         assert_eq!(std::fs::read(&f).unwrap(), b"");
 
         // A second create must error, not truncate existing content.
         std::fs::write(&f, b"data").unwrap();
-        let err = fs_create_file(s(f.clone()), None).unwrap_err();
+        let err = create_file_local(&s(f.clone()), &WorkspaceEnv::Local).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
         assert_eq!(std::fs::read(&f).unwrap(), b"data");
     }
@@ -487,9 +590,9 @@ mod tests {
     fn create_dir_builds_nested_chain_and_refuses_existing() {
         let dir = tempfile::tempdir().unwrap();
         let nested = dir.path().join("a/b/c");
-        fs_create_dir(s(nested.clone()), None).expect("create dir");
+        create_dir_local(&s(nested.clone()), &WorkspaceEnv::Local).expect("create dir");
         assert!(nested.is_dir());
-        let err = fs_create_dir(s(nested), None).unwrap_err();
+        let err = create_dir_local(&s(nested), &WorkspaceEnv::Local).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
     }
 
@@ -500,18 +603,20 @@ mod tests {
         let to = dir.path().join("b.txt");
         std::fs::write(&from, b"payload").unwrap();
 
-        fs_rename(s(from.clone()), s(to.clone()), None).expect("rename");
+        rename_local(&s(from.clone()), &s(to.clone()), &WorkspaceEnv::Local).expect("rename");
         assert!(!from.exists());
         assert_eq!(std::fs::read(&to).unwrap(), b"payload");
 
         // Missing source is reported, not silently ignored.
-        let err = fs_rename(s(from), s(dir.path().join("c.txt")), None).unwrap_err();
+        let err =
+            rename_local(&s(from), &s(dir.path().join("c.txt")), &WorkspaceEnv::Local).unwrap_err();
         assert!(err.contains("not found"), "got: {err}");
 
         // Refusing to overwrite an existing target is the data-loss guard.
         let occupied = dir.path().join("keep.txt");
         std::fs::write(&occupied, b"keep").unwrap();
-        let err = fs_rename(s(to.clone()), s(occupied.clone()), None).unwrap_err();
+        let err =
+            rename_local(&s(to.clone()), &s(occupied.clone()), &WorkspaceEnv::Local).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
         assert_eq!(std::fs::read(&occupied).unwrap(), b"keep");
         assert!(to.exists());
@@ -645,10 +750,10 @@ mod tests {
         std::fs::create_dir_all(src.path().join("d/inner")).unwrap();
         std::fs::write(src.path().join("d/inner/y.txt"), b"y").unwrap();
 
-        fs_copy(
-            vec![s(src.path().join("a.txt")), s(src.path().join("d"))],
-            s(dest.path().to_path_buf()),
-            None,
+        copy_local(
+            &[s(src.path().join("a.txt")), s(src.path().join("d"))],
+            &s(dest.path().to_path_buf()),
+            &WorkspaceEnv::Local,
         )
         .expect("copy");
 
@@ -663,10 +768,10 @@ mod tests {
         // copy, not move: the source survives.
         assert!(src.path().join("a.txt").exists());
 
-        let err = fs_copy(
-            vec![s(src.path().join("a.txt"))],
-            s(dest.path().to_path_buf()),
-            None,
+        let err = copy_local(
+            &[s(src.path().join("a.txt"))],
+            &s(dest.path().to_path_buf()),
+            &WorkspaceEnv::Local,
         )
         .unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
@@ -677,16 +782,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("x.txt");
         std::fs::write(&f, b"x").unwrap();
-        fs_delete(s(f.clone()), None).expect("delete file");
+        delete_local(&s(f.clone()), &WorkspaceEnv::Local).expect("delete file");
         assert!(!f.exists());
 
         let sub = dir.path().join("sub");
         std::fs::create_dir_all(sub.join("inner")).unwrap();
         std::fs::write(sub.join("inner/y.txt"), b"y").unwrap();
-        fs_delete(s(sub.clone()), None).expect("delete dir");
+        delete_local(&s(sub.clone()), &WorkspaceEnv::Local).expect("delete dir");
         assert!(!sub.exists());
 
-        let err = fs_delete(s(dir.path().join("missing")), None).unwrap_err();
+        let err = delete_local(&s(dir.path().join("missing")), &WorkspaceEnv::Local).unwrap_err();
         assert!(!err.is_empty());
     }
 
@@ -722,7 +827,7 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        fs_delete(s(link.clone()), None).expect("delete symlink");
+        delete_local(&s(link.clone()), &WorkspaceEnv::Local).expect("delete symlink");
         assert!(!link.exists(), "symlink itself should be gone");
         assert!(real.is_dir(), "target dir must survive");
         assert_eq!(std::fs::read(real.join("keep.txt")).unwrap(), b"keep");
