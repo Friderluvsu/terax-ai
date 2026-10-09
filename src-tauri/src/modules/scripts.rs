@@ -9,6 +9,7 @@ use super::workspace::WorkspaceRegistry;
 pub struct ScriptLaunchInfo {
     pub executable: bool,
     pub quarantined: bool,
+    pub has_shebang: bool,
 }
 
 fn regular_file(path: &str) -> Result<PathBuf, String> {
@@ -34,11 +35,16 @@ fn is_executable(_path: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn quarantine_from_result(size: isize, errno: i32) -> bool {
+    size >= 0 || errno != libc::ENOATTR
+}
+
+#[cfg(target_os = "macos")]
 fn is_quarantined(path: &Path) -> bool {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
-        return false;
+        return true;
     };
     let name = c"com.apple.quarantine";
     let size = unsafe {
@@ -51,7 +57,8 @@ fn is_quarantined(path: &Path) -> bool {
             0,
         )
     };
-    size >= 0
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    quarantine_from_result(size as isize, errno)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -59,11 +66,37 @@ fn is_quarantined(_path: &Path) -> bool {
     false
 }
 
+fn has_shebang(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 2];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok()
+        && head == *b"#!"
+}
+
 fn launch_info(path: &Path) -> ScriptLaunchInfo {
     ScriptLaunchInfo {
         executable: is_executable(path),
         quarantined: is_quarantined(path),
+        has_shebang: has_shebang(path),
     }
+}
+
+fn authorized_launch_info(
+    path: &Path,
+    registry: &WorkspaceRegistry,
+) -> Result<ScriptLaunchInfo, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "script has no parent directory".to_string())?;
+    if !registry.is_authorized(parent) {
+        return Err(format!(
+            "directory is outside the authorized workspace: {}",
+            parent.display()
+        ));
+    }
+    Ok(launch_info(path))
 }
 
 #[cfg(unix)]
@@ -96,8 +129,11 @@ fn make_executable(path: &Path, registry: &WorkspaceRegistry) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub fn script_launch_info(path: String) -> Result<ScriptLaunchInfo, String> {
-    Ok(launch_info(&regular_file(&path)?))
+pub fn script_launch_info(
+    path: String,
+    registry: tauri::State<'_, WorkspaceRegistry>,
+) -> Result<ScriptLaunchInfo, String> {
+    authorized_launch_info(&regular_file(&path)?, &registry)
 }
 
 #[tauri::command]
@@ -159,6 +195,36 @@ mod tests {
         assert!(make_executable(&p, &registry).is_err());
         let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o644);
+    }
+
+    #[test]
+    fn launch_info_refuses_unauthorized_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = script(dir.path(), 0o755);
+        assert!(authorized_launch_info(&p, &WorkspaceRegistry::default()).is_err());
+        assert!(authorized_launch_info(&p, &registry_for(dir.path())).is_ok());
+    }
+
+    #[test]
+    fn shebang_reads_first_two_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = script(dir.path(), 0o644);
+        assert!(launch_info(&p).has_shebang);
+        let q = dir.path().join("plain.txt");
+        std::fs::write(&q, "hello").unwrap();
+        assert!(!launch_info(&q).has_shebang);
+        let e = dir.path().join("one");
+        std::fs::write(&e, "#").unwrap();
+        assert!(!launch_info(&e).has_shebang);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quarantine_fails_closed_except_enoattr() {
+        assert!(quarantine_from_result(0, 0));
+        assert!(!quarantine_from_result(-1, libc::ENOATTR));
+        assert!(quarantine_from_result(-1, libc::EACCES));
+        assert!(quarantine_from_result(-1, libc::EPERM));
     }
 
     #[cfg(target_os = "macos")]

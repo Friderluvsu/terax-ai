@@ -9,7 +9,7 @@ import { consumeLaunchFiles, getLaunchDir } from "@/lib/launchDir";
 import { quoteShellArg } from "@/lib/shellQuote";
 import {
   buildRunInput,
-  isLaunchRunnable,
+  launchAction,
   scriptDirAndName,
 } from "@/modules/terminal/lib/runScript";
 import { toast } from "sonner";
@@ -599,6 +599,10 @@ export default function App() {
   const askPresence = usePresence(Boolean(askPopup), 120);
 
   const openNewTab = useCallback(() => {
+    newTab(inheritedCwdForNewTab());
+  }, [newTab, inheritedCwdForNewTab]);
+
+  const hotkeyNewTab = useCallback(() => {
     const kind = resolveNewTabKind(
       usePreferencesStore.getState().terminalDefaultMode,
       "default",
@@ -615,7 +619,7 @@ export default function App() {
     (alias: string) => {
       const command = buildSshCommand(alias);
       if (!command) return;
-      const { leafId } = newPrivateTab(inheritedCwdForNewTab());
+      const { leafId } = newPrivateTab(inheritedCwdForNewTab(), `ssh ${alias}`);
       void (async () => {
         await whenSessionReady(leafId);
         if (!writeToSession(leafId, command)) {
@@ -627,6 +631,10 @@ export default function App() {
   );
 
   const openNewBlockTab = useCallback(() => {
+    newBlockTab(inheritedCwdForNewTab());
+  }, [newBlockTab, inheritedCwdForNewTab]);
+
+  const hotkeyNewBlockTab = useCallback(() => {
     const kind = resolveNewTabKind(
       usePreferencesStore.getState().terminalDefaultMode,
       "alternate",
@@ -734,7 +742,7 @@ export default function App() {
     (path: string) => {
       const { dir, name } = scriptDirAndName(path);
       const tabId = newTab(dir);
-      updateTab(tabId, { title: name });
+      updateTab(tabId, { title: name, customTitle: name });
       void (async () => {
         for (let i = 0; i < 40; i++) {
           const tab = tabsRef.current.find((x) => x.id === tabId);
@@ -796,15 +804,18 @@ export default function App() {
     async (paths: string[]) => {
       if (paths.length === 0) return;
       // Prefs may not be hydrated on a cold start; never fail open to "run".
-      await usePreferencesStore.getState().init().catch(() => {});
+      await usePreferencesStore
+        .getState()
+        .init()
+        .catch(() => {});
       for (const path of paths) {
         const prefs = usePreferencesStore.getState();
-        const runnable =
-          isLaunchRunnable(path) &&
-          prefs.hydrated &&
-          prefs.launchCommandFiles === "run" &&
-          useWorkspaceEnvStore.getState().env.kind === "local";
-        if (runnable) void runScriptInNewTab(path);
+        const action = launchAction(
+          path,
+          prefs.hydrated ? prefs.launchCommandFiles : null,
+          useWorkspaceEnvStore.getState().env.kind,
+        );
+        if (action === "run") await runScriptInNewTab(path);
         else handleOpenFile(path, true);
       }
     },
@@ -1015,8 +1026,8 @@ export default function App() {
     () => ({
       "commandPalette.open": () => openCommandPalette("commands"),
       "commandPalette.content": () => openCommandPalette("content"),
-      "tab.new": openNewTab,
-      "tab.newBlock": openNewBlockTab,
+      "tab.new": hotkeyNewTab,
+      "tab.newBlock": hotkeyNewBlockTab,
       "tab.newPrivate": openNewPrivateTab,
       "tab.newPreview": () => openPreviewTab(""),
       "tab.newEditor": () => setNewEditorOpen(true),
@@ -1089,8 +1100,8 @@ export default function App() {
       stepSwitcher,
       cycleSpace,
       handleCloseTabOrPane,
-      openNewTab,
-      openNewBlockTab,
+      hotkeyNewTab,
+      hotkeyNewBlockTab,
       openNewPrivateTab,
       openPreviewTab,
       activeSpaceId,

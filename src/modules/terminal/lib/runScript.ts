@@ -1,3 +1,4 @@
+import type { LaunchCommandFiles } from "@/modules/settings/store";
 import { quoteShellPath } from "./quoteShellPath";
 
 const RUNNABLE_EXTS = new Set(["command", "tool", "sh", "bash", "zsh", "fish"]);
@@ -17,6 +18,16 @@ export function isRunnableScriptPath(path: string): boolean {
 
 export function isLaunchRunnable(path: string): boolean {
   return LAUNCH_EXTS.has(extOf(path));
+}
+
+export function launchAction(
+  path: string,
+  setting: LaunchCommandFiles | null,
+  envKind: string,
+): "run" | "edit" {
+  return isLaunchRunnable(path) && setting === "run" && envKind === "local"
+    ? "run"
+    : "edit";
 }
 
 export function hasShebang(text: string): boolean {

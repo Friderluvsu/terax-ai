@@ -6,6 +6,7 @@ import {
   buildRunInput,
   hasShebang,
   isLaunchRunnable,
+  launchAction,
   isRunnableScriptPath,
   scriptDirAndName,
 } from "./runScript";
@@ -68,5 +69,16 @@ describe("scriptDirAndName", () => {
       dir: "/",
       name: "c.command",
     });
+  });
+});
+
+describe("launchAction", () => {
+  it("runs only .command/.tool when the setting is run in a local env", () => {
+    expect(launchAction("/a/x.command", "run", "local")).toBe("run");
+    expect(launchAction("/a/x.tool", "run", "local")).toBe("run");
+    expect(launchAction("/a/x.sh", "run", "local")).toBe("edit");
+    expect(launchAction("/a/x.command", "edit", "local")).toBe("edit");
+    expect(launchAction("/a/x.command", null, "local")).toBe("edit");
+    expect(launchAction("/a/x.command", "run", "wsl")).toBe("edit");
   });
 });

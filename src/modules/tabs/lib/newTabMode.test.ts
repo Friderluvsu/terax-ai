@@ -11,4 +11,9 @@ describe("resolveNewTabKind", () => {
     expect(resolveNewTabKind("blocks", "default")).toBe("blocks");
     expect(resolveNewTabKind("blocks", "alternate")).toBe("classic");
   });
+
+  it("ignores the preference for explicit palette and menu entries", () => {
+    expect(resolveNewTabKind("blocks", "explicit", "classic")).toBe("classic");
+    expect(resolveNewTabKind("classic", "explicit", "blocks")).toBe("blocks");
+  });
 });
