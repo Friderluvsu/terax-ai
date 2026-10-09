@@ -26,7 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { cn } from "@/lib/utils";
+import { cn, isHtmlPath, isMarkdownPath, isSvgPath } from "@/lib/utils";
 import { ExplorerSearch, type ExplorerSearchHandle } from "./ExplorerSearch";
 import {
   EntryRow,
@@ -60,10 +60,14 @@ export type FileExplorerHandle = {
   focusSearch: () => void;
 };
 
+const isPreviewablePath = (path: string) =>
+  isHtmlPath(path) || isSvgPath(path) || isMarkdownPath(path);
+
 type Props = {
   rootPath: string | null;
   activeFilePath?: string | null;
   onOpenFile: (path: string, pin?: boolean) => void;
+  onOpenPreview?: (path: string) => void;
   onPathRenamed?: (from: string, to: string) => void;
   onPathsDeleted?: (paths: string[]) => void;
   canReplacePath?: (path: string) => boolean;
@@ -206,6 +210,7 @@ export const FileExplorer = memo(
       rootPath,
       activeFilePath,
       onOpenFile,
+      onOpenPreview,
       onPathRenamed,
       onPathsDeleted,
       canReplacePath,
@@ -826,6 +831,16 @@ export const FileExplorer = memo(
                       Open
                     </ContextMenuItem>
                   )}
+                  {!menuTarget.isDir &&
+                    onOpenPreview &&
+                    isPreviewablePath(menuTarget.path) && (
+                      <ContextMenuItem
+                        className={COMPACT_ITEM}
+                        onSelect={() => onOpenPreview(menuTarget.path)}
+                      >
+                        Open Preview
+                      </ContextMenuItem>
+                    )}
                   {!menuTarget.isDir &&
                     onRunScript &&
                     isRunnableScriptPath(menuTarget.path) && (
