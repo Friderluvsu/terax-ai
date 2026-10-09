@@ -68,7 +68,8 @@ describe("ensureUserFonts", () => {
     const { resolveFontFamily } = await import("./fonts");
     await ensureUserFonts("JetBrainsMono");
     expect(added).toHaveLength(3);
-    expect(getUserFontsVersion()).toBe(1);
+    expect(getUserFontsVersion("JetBrainsMono")).toBe(1);
+    expect(getUserFontsVersion("Other")).toBe(0);
     expect(resolveFontFamily("JetBrainsMono")).toBe(
       '"JetBrainsMono", "JetBrains Mono", "X Nerd Font", "JetBrains Mono", SFMono-Regular, Menlo, monospace',
     );
@@ -77,10 +78,15 @@ describe("ensureUserFonts", () => {
   it("caches per family and survives IPC failure", async () => {
     stubFonts();
     invoke.mockRejectedValue(new Error("boom"));
-    const { ensureUserFonts } = await import("./userFonts");
+    const { ensureUserFonts, getUserFontsVersion, subscribeUserFonts } =
+      await import("./userFonts");
+    const changed = vi.fn();
+    subscribeUserFonts(changed);
     const a = ensureUserFonts("Foo");
     expect(ensureUserFonts("foo")).toBe(a);
     await expect(a).resolves.toBeUndefined();
+    expect(getUserFontsVersion("Foo")).toBe(0);
+    expect(changed).not.toHaveBeenCalled();
     const { resolveFontFamily } = await import("./fonts");
     expect(resolveFontFamily("Foo")).toBe(
       '"Foo", "JetBrains Mono", SFMono-Regular, Menlo, monospace',
@@ -101,5 +107,21 @@ describe("ensureUserFonts", () => {
     expect(resolveFontFamily("")).toBe(
       '"X Nerd Font", "JetBrains Mono", SFMono-Regular, Menlo, monospace',
     );
+  });
+
+  it("keeps the version when a second weight adds nothing new", async () => {
+    stubFonts();
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "fonts_resolve")
+        return { family: "X Nerd Font", faces: [face(3, 400), face(4, 700)] };
+      if (cmd === "fonts_nerd_fallback") return null;
+      return new ArrayBuffer(4);
+    });
+    const { ensureUserFonts, getUserFontsVersion } = await import(
+      "./userFonts"
+    );
+    await ensureUserFonts("X Nerd Font", "400");
+    await ensureUserFonts("X Nerd Font", "700");
+    expect(getUserFontsVersion("X Nerd Font")).toBe(1);
   });
 });
