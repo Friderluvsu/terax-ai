@@ -34,6 +34,7 @@ function baseContext(
     sshHosts: [],
     openSsh: noop,
     openSshSpace: noop,
+    openSshConnect: noop,
     openNewEditor: noop,
     openNewPreview: noop,
     openGitGraph: noop,

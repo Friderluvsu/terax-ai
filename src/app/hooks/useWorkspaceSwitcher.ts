@@ -1,4 +1,5 @@
 import { type RefObject, useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { native } from "@/modules/ai/lib/native";
 import type { Tab } from "@/modules/tabs";
@@ -17,7 +18,7 @@ async function resolveEnvHome(env: WorkspaceEnv): Promise<string> {
     case "wsl":
       return getWslHome(env.distro);
     case "ssh":
-      throw new Error("SSH workspaces are not supported yet");
+      return invoke<string>("ssh_home", { host: env.host });
     default:
       return assertNever(env);
   }
@@ -122,6 +123,10 @@ export function useWorkspaceSwitcher({
       try {
         nextHome = await resolveEnvHome(env);
       } catch {
+        if (env.kind === "ssh") {
+          setHome(null);
+          setLaunchCwd(null);
+        }
         return null;
       }
       await authorizeHome(nextHome);
