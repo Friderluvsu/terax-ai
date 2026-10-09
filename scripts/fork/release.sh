@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build "Terax Fork.app" with ad-hoc signing. `--install` copies it to /Applications.
-# Never touches /Applications/Terax.app (the stock app).
+# Build the fork as "Terax.app" (identifier dev.terax.fork) with ad-hoc signing.
+# `--install` copies it to /Applications, refusing to overwrite a different app
+# (for example the stock Terax, identifier app.crynta.terax).
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,7 +17,8 @@ for arg in "$@"; do
   esac
 done
 
-app_name="Terax Fork.app"
+app_name="Terax.app"
+fork_id="dev.terax.fork"
 bundle="$repo/src-tauri/target/release/bundle/macos/$app_name"
 
 pnpm fork:build
@@ -29,6 +31,14 @@ codesign --verify --deep --strict "$bundle"
 
 if [ "$install" -eq 1 ]; then
   dest="/Applications/$app_name"
+  if [ -d "$dest" ]; then
+    current_id="$(defaults read "$dest/Contents/Info.plist" CFBundleIdentifier 2>/dev/null || true)"
+    if [ "$current_id" != "$fork_id" ]; then
+      echo "refusing to overwrite $dest (identifier '$current_id', expected '$fork_id'); move it away first" >&2
+      exit 1
+    fi
+  fi
+  osascript -e "tell application id \"$fork_id\" to quit" >/dev/null 2>&1 || true
   pkill -f "$dest/Contents/MacOS/" 2>/dev/null || true
   rm -rf "$dest"
   ditto "$bundle" "$dest"

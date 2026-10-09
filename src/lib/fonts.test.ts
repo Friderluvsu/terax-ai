@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveFontFamily } from "./fonts";
+import { resolveFontFamily, spacedNerdFontName } from "./fonts";
 
 const FALLBACK = '"JetBrains Mono", SFMono-Regular, Menlo, monospace';
 
@@ -89,5 +89,31 @@ describe("resolveFontFamily", () => {
   it("falls back to the mono chain for empty input", () => {
     expect(resolveFontFamily("")).toBe(FALLBACK);
     expect(resolveFontFamily("   ")).toBe(FALLBACK);
+  });
+
+  it("adds the spaced family after a compact Nerd Font name", () => {
+    expect(resolveFontFamily("JetBrainsMonoNerdFont")).toBe(
+      `"JetBrainsMonoNerdFont", "JetBrainsMono Nerd Font", ${FALLBACK}`,
+    );
+  });
+});
+
+describe("spacedNerdFontName", () => {
+  it("expands compact Nerd Font names", () => {
+    expect(spacedNerdFontName("JetBrainsMonoNerdFont")).toBe(
+      "JetBrainsMono Nerd Font",
+    );
+    expect(spacedNerdFontName("JetBrainsMonoNLNerdFontMono")).toBe(
+      "JetBrainsMonoNL Nerd Font Mono",
+    );
+    expect(spacedNerdFontName("FiraCodeNerdFontPropo")).toBe(
+      "FiraCode Nerd Font Propo",
+    );
+  });
+
+  it("leaves other names alone", () => {
+    expect(spacedNerdFontName("JetBrainsMono Nerd Font")).toBeNull();
+    expect(spacedNerdFontName("Menlo")).toBeNull();
+    expect(spacedNerdFontName("NerdFont")).toBeNull();
   });
 });

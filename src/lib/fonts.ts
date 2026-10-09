@@ -39,8 +39,19 @@ export function resolveFontFamily(userInput: string): string {
   if (!name) return detectMonoFontFamily();
   // A comma means the user gave a full stack; otherwise quote the single family.
   // Strip any quotes first so a stray quote can't produce a malformed token.
-  const head = name.includes(",") ? name : `"${name.replace(/['"]/g, "")}"`;
+  if (name.includes(",")) return `${name}, ${FALLBACK_CHAIN}`;
+  const family = name.replace(/['"]/g, "");
+  const spaced = spacedNerdFontName(family);
+  const head = spaced ? `"${family}", "${spaced}"` : `"${family}"`;
   return `${head}, ${FALLBACK_CHAIN}`;
+}
+
+// Nerd Font files are named like "JetBrainsMonoNerdFont-Regular.ttf", so users
+// often type the compact name; the CSS family is "JetBrainsMono Nerd Font".
+export function spacedNerdFontName(family: string): string | null {
+  const m = /^([A-Za-z0-9]+?)NerdFont(Mono|Propo)?$/i.exec(family);
+  if (!m) return null;
+  return m[2] ? `${m[1]} Nerd Font ${m[2]}` : `${m[1]} Nerd Font`;
 }
 
 export function detectMonoFontFamily(): string {

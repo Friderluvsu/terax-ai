@@ -1,5 +1,5 @@
 {
-  "productName": "Terax Fork",
+  "productName": "Terax",
   "identifier": "dev.terax.fork",
   "bundle": {
     "createUpdaterArtifacts": false
