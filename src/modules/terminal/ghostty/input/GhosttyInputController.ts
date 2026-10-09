@@ -13,6 +13,9 @@ import { TerminalNativeSelection } from "@/modules/terminal/ghostty/input/Termin
 
 const DUPLICATE_INPUT_WINDOW_MS = 75;
 
+const DOM_DELTA_LINE = 1;
+const DOM_DELTA_PAGE = 2;
+
 const KEY_MAP: Readonly<Record<string, Key>> = {
   KeyA: Key.A,
   KeyB: Key.B,
@@ -468,12 +471,15 @@ export class GhosttyInputController {
       return;
     }
 
-    if (this.options.model.scrollPosition().history === 0) return;
+    const altScroll =
+      this.options.model.modes().alternateScreen &&
+      this.options.model.mode(1007);
+    if (!altScroll && this.options.model.scrollPosition().history === 0) return;
     const cellHeight = Math.max(1, this.options.cellSize().height);
     const delta =
-      event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      event.deltaMode === DOM_DELTA_LINE
         ? event.deltaY
-        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        : event.deltaMode === DOM_DELTA_PAGE
           ? event.deltaY * this.options.model.rows
           : event.deltaY / cellHeight;
     this.wheelRemainder += delta;
@@ -482,9 +488,29 @@ export class GhosttyInputController {
         ? Math.ceil(this.wheelRemainder)
         : Math.floor(this.wheelRemainder);
     this.wheelRemainder -= lines;
-    if (lines !== 0) this.options.model.scrollBy(lines);
+    if (altScroll) {
+      this.sendWheelArrows(lines);
+    } else if (lines !== 0) {
+      this.options.model.scrollBy(lines);
+    }
     consume(event);
   };
+
+  private sendWheelArrows(lines: number): void {
+    if (lines === 0) return;
+    const encoded = this.options.model.encodeKey({
+      action: KeyAction.PRESS,
+      key: lines < 0 ? Key.UP : Key.DOWN,
+      mods: Mods.NONE,
+      utf8: undefined,
+      unshiftedCodepoint: 0,
+    });
+    if (encoded.byteLength === 0) return;
+    const count = Math.abs(lines);
+    const out = new Uint8Array(encoded.byteLength * count);
+    for (let i = 0; i < count; i += 1) out.set(encoded, i * encoded.byteLength);
+    this.options.onData(out);
+  }
 
   private mousePosition(
     event: MouseEvent,
