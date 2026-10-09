@@ -183,6 +183,8 @@ pub struct Session {
     _job: Option<crate::modules::proc::job::ProcessJob>,
     /// PID of the shell process. 0 means unknown; callers must skip checks when 0.
     pub shell_pid: u32,
+    /// An ssh client: local process checks cannot see the remote shell's jobs.
+    pub remote: bool,
     pub killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
@@ -289,6 +291,7 @@ pub fn spawn(
     blocks: bool,
     shell: Option<String>,
     control: Option<crate::modules::control::ShellControlEnv>,
+    remote_pty: Option<crate::modules::remote::shell_init::RemotePty>,
     on_data: Channel<Response>,
     on_exit: Channel<i32>,
 ) -> Result<(Arc<Session>, PtySize), String> {
@@ -304,7 +307,8 @@ pub fn spawn(
     };
     let pair = pty_system.openpty(size).map_err(|e| e.to_string())?;
 
-    let cmd = shell_init::build_command(cwd, workspace, blocks, shell, control)?;
+    let remote = matches!(workspace, WorkspaceEnv::Ssh { .. });
+    let cmd = shell_init::build_command(cwd, workspace, blocks, shell, control, remote_pty)?;
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
 
@@ -345,6 +349,7 @@ pub fn spawn(
         #[cfg(windows)]
         _job: job,
         shell_pid,
+        remote,
         killer: Mutex::new(killer),
         writer: writer.clone(),
         master: Arc::new(Mutex::new(Some(pair.master))),
@@ -703,6 +708,7 @@ mod tests {
                 .unwrap()
                 .1,
             shell_pid: child.process_id().unwrap_or(0),
+            remote: false,
             killer: Mutex::new(killer),
             writer,
             master: Arc::new(Mutex::new(Some(pair.master))),
@@ -756,6 +762,7 @@ mod tests {
                 .unwrap()
                 .1,
             shell_pid: 0,
+            remote: false,
             killer: Mutex::new(killer),
             writer,
             master: Arc::new(Mutex::new(Some(pair.master))),

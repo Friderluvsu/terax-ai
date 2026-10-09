@@ -13,6 +13,7 @@ import {
   setNotifyLongCommandsSeconds,
   setTerminalClickToMoveCursor,
   setLaunchCommandFiles,
+  setSshRemoteShellIntegration,
   setTerminalDefaultMode,
   setTerminalOptionAsMeta,
   type TerminalOptionAsMeta,
@@ -35,6 +36,9 @@ export function ForkSection() {
   );
 
   const notifySeconds = usePreferencesStore((s) => s.notifyLongCommandsSeconds);
+  const remoteShellIntegration = usePreferencesStore(
+    (s) => s.sshRemoteShellIntegration,
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -114,6 +118,15 @@ export function ForkSection() {
               <SelectItem value="both">Both Options</SelectItem>
             </SelectContent>
           </Select>
+        </SettingRow>
+        <SettingRow
+          title="SSH shell integration"
+          description="SSH terminals install small integration scripts in ~/.cache/terax/shell-integration on the server for cwd tracking and Blocks. Off starts the remote login shell as is. Applies to new SSH terminals."
+        >
+          <Switch
+            checked={remoteShellIntegration}
+            onCheckedChange={(v) => void setSshRemoteShellIntegration(v)}
+          />
         </SettingRow>
         <SettingRow
           title="Notify when a long command finishes"

@@ -872,6 +872,7 @@ async function initializeSessionGeneration(
     preferences.terminalShell || undefined,
     session.leafId,
     session.env,
+    preferences.sshRemoteShellIntegration,
   );
   if (session.disposed || generation !== session.generation) {
     await pty.close();

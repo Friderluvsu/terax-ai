@@ -252,6 +252,7 @@ fn pty_rejects_ssh_and_withholds_control_env() {
             true,
             None,
             None,
+            None,
         )
         .map(|_| ()),
     );

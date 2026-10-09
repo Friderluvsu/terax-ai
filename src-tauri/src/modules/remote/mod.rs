@@ -5,6 +5,7 @@ pub mod exec;
 #[cfg(test)]
 mod fail_closed_tests;
 pub mod quote;
+pub mod shell_init;
 pub mod ssh_config;
 pub mod state;
 pub mod target;

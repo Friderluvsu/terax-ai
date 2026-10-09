@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use portable_pty::CommandBuilder;
 
 use crate::modules::control::ShellControlEnv;
+use crate::modules::remote::shell_init::{self as remote_shell, RemotePty};
 use crate::modules::workspace::{self, WorkspaceEnv};
 
 #[cfg(windows)]
@@ -17,7 +18,7 @@ const ZLOGIN_SCRIPT: &str = include_str!("scripts/zlogin.zsh");
 const ZSHRC_SCRIPT: &str = include_str!("scripts/zshrc.zsh");
 #[cfg(windows)]
 const FISH_INIT_SCRIPT: &str = include_str!("scripts/init.fish");
-const FISH_REINSTALL_PROMPT: &str =
+pub(crate) const FISH_REINSTALL_PROMPT: &str =
     "functions -q __terax_install_prompt; and __terax_install_prompt";
 
 #[cfg(windows)]
@@ -56,9 +57,17 @@ pub fn build_command(
     blocks: bool,
     shell: Option<String>,
     control: Option<ShellControlEnv>,
+    remote: Option<RemotePty>,
 ) -> Result<CommandBuilder, String> {
     match workspace {
-        WorkspaceEnv::Ssh { .. } => Err(workspace::SSH_UNSUPPORTED.to_string()),
+        WorkspaceEnv::Ssh { host } => {
+            let remote = remote.ok_or_else(|| workspace::SSH_UNSUPPORTED.to_string())?;
+            let (ssh, args) = remote_shell::pty_argv(&host, cwd.as_deref(), blocks, &remote)?;
+            let mut cmd = CommandBuilder::new(ssh);
+            cmd.args(args);
+            apply_common(&mut cmd, None, false, None);
+            Ok(cmd)
+        }
         #[cfg(unix)]
         WorkspaceEnv::Local | WorkspaceEnv::Wsl { .. } => {
             unix::build(cwd, blocks, sanitize_shell_override(shell), control)
