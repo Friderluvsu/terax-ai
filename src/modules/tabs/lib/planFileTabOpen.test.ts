@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type EditorTab,
   planFileTabOpen,
-  planMarkdownTabOpen,
+  planRenderedTabOpen,
   type Tab,
   type TerminalTab,
 } from "./useTabs";
@@ -104,7 +104,7 @@ describe("planFileTabOpen", () => {
   });
 });
 
-describe("planMarkdownTabOpen", () => {
+describe("planRenderedTabOpen", () => {
   it("reuses markdown tabs only within the requested space", () => {
     const tabs: Tab[] = [
       terminal,
@@ -117,10 +117,10 @@ describe("planMarkdownTabOpen", () => {
       },
     ];
 
-    const reused = planMarkdownTabOpen(tabs, "/repo/README.md", "two", () => {
+    const reused = planRenderedTabOpen(tabs, "/repo/README.md", "two", () => {
       throw new Error("should not allocate");
     });
-    const plan = planMarkdownTabOpen(tabs, "/repo/README.md", "one", () => 4);
+    const plan = planRenderedTabOpen(tabs, "/repo/README.md", "one", () => 4);
 
     expect(reused).toEqual({ tabs, tabId: 3 });
     expect(plan.tabId).toBe(4);
@@ -135,8 +135,29 @@ describe("planMarkdownTabOpen", () => {
     expect(plan.tabs).toContain(tabs[1]);
   });
 
+  it("reuses an editor tab showing the same markdown file in Raw", () => {
+    const tabs: Tab[] = [
+      terminal,
+      {
+        id: 3,
+        kind: "editor",
+        spaceId: "one",
+        title: "README.md",
+        path: "/repo/README.md",
+        dirty: false,
+        preview: false,
+      },
+    ];
+
+    const plan = planRenderedTabOpen(tabs, "/repo/README.md", "one", () => {
+      throw new Error("should not allocate");
+    });
+
+    expect(plan).toEqual({ tabs, tabId: 3 });
+  });
+
   it("preserves markdown and regular files in a mixed launch batch", () => {
-    const markdownPlan = planMarkdownTabOpen(
+    const markdownPlan = planRenderedTabOpen(
       [terminal],
       "/repo/README.md",
       "one",
@@ -173,7 +194,7 @@ describe("planMarkdownTabOpen", () => {
       },
     ];
 
-    const plan = planMarkdownTabOpen(tabs, "C:/repo/README.md", "one", () => {
+    const plan = planRenderedTabOpen(tabs, "C:/repo/README.md", "one", () => {
       throw new Error("should not allocate");
     });
 
