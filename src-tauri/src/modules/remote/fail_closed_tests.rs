@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::modules::fs::{file, grep, mutate, search, tree, watch};
+use crate::modules::fs::{file, grep, mutate, search, watch};
 use crate::modules::git::{operations, utils};
 use crate::modules::shell::{background, build_oneshot_command, run_blocking_inner, session};
 use crate::modules::workspace::{
@@ -118,31 +118,10 @@ fn workspace_auth_rejects_ssh() {
 }
 
 #[test]
-fn fs_reads_reject_ssh() {
+fn unported_fs_reads_reject_ssh() {
     let fx = Fixture::new();
     let root = fx.root_str();
-    let f = fx.file_str();
 
-    assert_ssh_err(tree::fs_read_dir(
-        root.clone(),
-        true,
-        Some(true),
-        Some(ssh()),
-    ));
-    assert_ssh_err(tree::list_subdirs(root.clone(), true, Some(ssh())));
-    assert_ssh_err(tauri::async_runtime::block_on(file::fs_read_file(
-        f.clone(),
-        Some(ssh()),
-        Some(true),
-    )));
-    assert_ssh_err(tauri::async_runtime::block_on(file::fs_canonicalize(
-        f.clone(),
-        Some(ssh()),
-    )));
-    assert_ssh_err(tauri::async_runtime::block_on(file::fs_stat(
-        f.clone(),
-        Some(ssh()),
-    )));
     assert_ssh_err(search::fs_search(
         root.clone(),
         "a".into(),

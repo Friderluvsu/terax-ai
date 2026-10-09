@@ -1,3 +1,4 @@
+pub mod dispatch;
 #[cfg(unix)]
 pub mod sftp;
 

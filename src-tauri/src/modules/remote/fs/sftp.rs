@@ -516,6 +516,13 @@ impl RemoteFs for SftpConn {
 
     async fn read(&self, path: &str, limit: u64) -> Result<ReadOutcome, FsError> {
         validate_path(path)?;
+        // Opening a FIFO or device blocks the single-threaded sftp-server.
+        let attrs = self.raw.stat(path).await.map_err(|e| map_err(e, path))?;
+        match metadata(&attrs.attrs).kind {
+            EntryKind::File => {}
+            EntryKind::Dir => return Err(FsError::Failure(format!("{path}: is a directory"))),
+            _ => return Err(FsError::Failure(format!("{path}: not a regular file"))),
+        }
         let handle = self
             .raw
             .open(path, OpenFlags::READ, FileAttributes::empty())
@@ -857,6 +864,21 @@ async fn connect_failed(
 }
 
 #[cfg(test)]
+pub(crate) fn test_launch() -> Option<Launch> {
+    const SERVERS: [&str; 4] = [
+        "/usr/libexec/sftp-server",
+        "/usr/lib/openssh/sftp-server",
+        "/usr/libexec/openssh/sftp-server",
+        "/usr/lib/ssh/sftp-server",
+    ];
+    let program = SERVERS.iter().map(Path::new).find(|p| p.is_file())?;
+    Some(Launch {
+        program: program.to_path_buf(),
+        args: Vec::new(),
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::modules::remote::control::base_options;
@@ -947,19 +969,8 @@ mod server_tests {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Instant;
 
-    const SERVERS: [&str; 4] = [
-        "/usr/libexec/sftp-server",
-        "/usr/lib/openssh/sftp-server",
-        "/usr/libexec/openssh/sftp-server",
-        "/usr/lib/ssh/sftp-server",
-    ];
-
     fn local_server() -> Option<Launch> {
-        let program = SERVERS.iter().map(Path::new).find(|p| p.is_file())?;
-        Some(Launch {
-            program: program.to_path_buf(),
-            args: Vec::new(),
-        })
+        super::test_launch()
     }
 
     fn rt() -> tokio::runtime::Runtime {
@@ -1167,6 +1178,16 @@ mod server_tests {
             std::fs::write(&file, "x").unwrap();
             assert!(fs.read_dir(&file).await.is_err());
             assert!(fs.mkdir(&file).await.is_err());
+
+            let fifo = format!("{root}/fifo");
+            let c = std::ffi::CString::new(fifo.as_str()).unwrap();
+            // SAFETY: c is a valid NUL-terminated path.
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            let refused = tokio::time::timeout(Duration::from_secs(5), fs.read(&fifo, 10))
+                .await
+                .expect("read of a fifo must not block");
+            assert!(matches!(refused, Err(FsError::Failure(_))));
+            assert_eq!(fs.read(&file, 10).await.map(|_| ()), Ok(()));
 
             // SAFETY: geteuid has no preconditions.
             if unsafe { libc::geteuid() } != 0 {

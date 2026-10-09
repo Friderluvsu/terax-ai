@@ -15,6 +15,7 @@ import {
 } from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { executeBatchMove, excludeNestedSources } from "./batchMove";
+import { createLatestGate } from "./latestGate";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
 
 export type DirEntry = {
@@ -123,6 +124,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const nodesRef = useRef(nodes);
   const watchedRef = useRef<Set<string>>(new Set());
   const envRef = useRef(workspace);
+  const fetchGateRef = useRef(createLatestGate());
   const optionsRef = useRef(options);
   const scopeKey = `${workspaceKey}\u0000${rootPath ?? ""}`;
   const scopeKeyRef = useRef(scopeKey);
@@ -184,6 +186,11 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   }, []);
 
   const fetchChildren = useCallback(async (path: string) => {
+    const gate = fetchGateRef.current;
+    const ticket = gate.begin(path);
+    const scope = scopeKeyRef.current;
+    const stale = () =>
+      !gate.isLatest(path, ticket) || scopeKeyRef.current !== scope;
     if (nodesRef.current[path]?.status !== "loaded") {
       setNodes((s) => ({ ...s, [path]: { status: "loading" } }));
     }
@@ -192,6 +199,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         showHidden: showHiddenRef.current,
         gitDecorations: gitDecorationsRef.current,
       });
+      if (stale()) return;
 
       const prev = nodesRef.current[path];
       if (prev?.status === "loaded" && sameDirListing(prev.entries, entries)) {
@@ -239,6 +247,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         watchRemove(toUnwatch, envRef.current);
       }
     } catch (e) {
+      if (stale()) return;
       setNodes((s) => ({
         ...s,
         [path]: { status: "error", message: String(e) },
@@ -268,6 +277,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     // re-populating — leaving a valid root with an empty tree when rootPath
     // changes rapidly (e.g. switching folders in quick succession).
     nodesRef.current = {};
+    fetchGateRef.current.clear();
 
     const env = parseWorkspaceScopeKey(workspaceKey);
     const toWatch = [rootPath, ...restored];
