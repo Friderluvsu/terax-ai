@@ -242,6 +242,20 @@ export class GhosttyInputController {
     )
       return;
     if (
+      event.altKey &&
+      event.key === "Dead" &&
+      !event.isComposing &&
+      !this.composing &&
+      !event.defaultPrevented
+    ) {
+      const base = this.optionMetaBase(event);
+      if (base) {
+        consume(event);
+        this.emitText(`\x1b${base}`, "keydown", false);
+        return;
+      }
+    }
+    if (
       event.defaultPrevented ||
       this.composing ||
       event.isComposing ||
@@ -448,6 +462,7 @@ export class GhosttyInputController {
   private readonly handleBlur = (): void => {
     this.pressedKeys.clear();
     this.composing = false;
+    this.altLeftDown = false;
     if (this.options.model.modes().focusReporting) {
       this.emitText("\x1b[O", "keydown", false, false);
     }

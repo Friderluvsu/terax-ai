@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cellClickDelta,
   handleCellClick,
+  shouldOpenLinkOnClick,
   shouldMoveCursor,
   type CellClickDeps,
   type CellClickState,
@@ -132,5 +133,88 @@ describe("handleCellClick", () => {
     const event = { ...plain, altKey: true };
     expect(handleCellClick(value, { row: 0, column: 3 }, event)).toBe(true);
     expect(write).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shouldOpenLinkOnClick", () => {
+  it("does not open a link on a plain click inside the input group", () => {
+    const { value } = deps();
+    expect(shouldOpenLinkOnClick(value, { row: 0, column: 3 }, plain)).toBe(
+      false,
+    );
+  });
+
+  it("opens a link on Cmd+click", () => {
+    const { value } = deps();
+    const event = { ...plain, metaKey: true };
+    expect(shouldOpenLinkOnClick(value, { row: 0, column: 3 }, event)).toBe(
+      true,
+    );
+  });
+
+  it("opens a link on a click outside the input group", () => {
+    const { value } = deps();
+    expect(shouldOpenLinkOnClick(value, { row: 3, column: 3 }, plain)).toBe(
+      true,
+    );
+  });
+});
+
+describe("cellClickDelta wrapping", () => {
+  function wrapDeps(
+    rows: { text: string; wrapped: boolean }[],
+    cursor: { x: number; y: number },
+  ) {
+    const cols = 10;
+    const lines = rows.map(({ text, wrapped }) => {
+      const cells = [...text];
+      while (cells.length < cols) cells.push(" ");
+      return { cells, wrapped };
+    });
+    return {
+      model: {
+        cols,
+        cursor: () => ({
+          ...cursor,
+          visible: true,
+          blinking: false,
+          style: "block" as const,
+        }),
+        viewportLine: (row: number) => lines[row] ?? null,
+        encodeKey: () => Uint8Array.of(1),
+      },
+      state: (altKey: boolean) => ({ ...base, altKey }),
+      write: vi.fn(),
+    } as unknown as CellClickDeps;
+  }
+
+  it("accounts for pending wrap on a full last column", () => {
+    const value = wrapDeps([{ text: "$ abcdefgh", wrapped: false }], {
+      x: 9,
+      y: 0,
+    });
+    expect(cellClickDelta(value, { row: 0, column: 5 }, plain)).toBe(-5);
+    expect(cellClickDelta(value, { row: 0, column: 9 }, plain)).toBe(-1);
+  });
+
+  it("does not add pending wrap on an empty last cell", () => {
+    const value = wrapDeps([{ text: "$ abc", wrapped: false }], {
+      x: 9,
+      y: 0,
+    });
+    expect(cellClickDelta(value, { row: 0, column: 5 }, plain)).toBe(-4);
+  });
+
+  it("spans a group of two wrapped rows", () => {
+    const value = wrapDeps(
+      [
+        { text: "$ abcdefgh", wrapped: false },
+        { text: "ij", wrapped: true },
+      ],
+      { x: 2, y: 1 },
+    );
+    expect(cellClickDelta(value, { row: 0, column: 3 }, plain)).toBe(-9);
+    expect(cellClickDelta(value, { row: 1, column: 0 }, plain)).toBe(-2);
+    expect(cellClickDelta(value, { row: 4, column: 0 }, plain)).toBeNull();
   });
 });

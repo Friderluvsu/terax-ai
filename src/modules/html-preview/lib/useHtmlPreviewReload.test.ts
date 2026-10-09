@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createReloadScheduler, shouldReloadFor } from "./useHtmlPreviewReload";
+import {
+  createReloadScheduler,
+  RELOAD_DEBOUNCE_MS,
+  reloadAction,
+  shouldReloadFor,
+} from "./useHtmlPreviewReload";
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: () => ({ listen: vi.fn() }),
@@ -46,5 +51,64 @@ describe("createReloadScheduler", () => {
     s.setVisible(true);
     vi.advanceTimersByTime(1000);
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+describe("discardPending", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("drops a reload accumulated while hidden", () => {
+    const reload = vi.fn();
+    const s = createReloadScheduler(reload, 200, false);
+    s.notify();
+    s.discardPending();
+    s.setVisible(true);
+    vi.advanceTimersByTime(1000);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("drops it when discarded after the scheduler is shown", () => {
+    const reload = vi.fn();
+    const s = createReloadScheduler(reload, 200, false);
+    s.notify();
+    s.setVisible(true);
+    s.discardPending();
+    vi.advanceTimersByTime(1000);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("still reloads for changes after the discard", () => {
+    const reload = vi.fn();
+    const s = createReloadScheduler(reload, 200, true);
+    s.notify();
+    s.discardPending();
+    s.notify();
+    vi.advanceTimersByTime(200);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("one save, two events", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("collapses fs:file-written and a later fs:changed into one reload", () => {
+    const reload = vi.fn();
+    const s = createReloadScheduler(reload);
+    s.notify();
+    vi.advanceTimersByTime(300);
+    s.notify();
+    vi.advanceTimersByTime(RELOAD_DEBOUNCE_MS * 2);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reloadAction", () => {
+  it("re-serves after an error", () => {
+    expect(reloadAction("preview_serve failed")).toBe("reserve");
+  });
+  it("only refreshes the frame without an error", () => {
+    expect(reloadAction(null)).toBe("refresh");
   });
 });

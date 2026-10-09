@@ -34,8 +34,20 @@ describe("HtmlPreviewFrame iframe sandbox", () => {
   });
 });
 
+describe("HtmlPreviewFrame reload wiring", () => {
+  it("re-runs preview_serve from the error state", () => {
+    expect(src).toMatch(/serveNonce\]\)/);
+    expect(src).toMatch(/reloadAction\(error\)/);
+  });
+  it("discards the pending reload when a suspended frame is shown", () => {
+    expect(src).toMatch(/!loadedRef\.current\) discardPendingReload\(\)/);
+  });
+});
+
 describe("non-canonical path alias", () => {
   it("is not derivable client-side, so the frame must not rely on it", () => {
-    expect(relativeToRoot("/var/proj/a.html", "/private/var/proj")).toBeNull();
+    expect(
+      relativeToRoot("/var/proj/a.html", "/private/var/proj", "macos"),
+    ).toBeNull();
   });
 });

@@ -2,8 +2,8 @@ import { currentWorkspaceEnv } from "@/modules/workspace";
 import { Globe02Icon, LinkSquare02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useState } from "react";
-import { useHtmlPreviewReload } from "./lib/useHtmlPreviewReload";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { reloadAction, useHtmlPreviewReload } from "./lib/useHtmlPreviewReload";
 
 type Props = {
   path: string;
@@ -20,7 +20,11 @@ export function HtmlPreviewFrame({ path, rootHint, visible }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [loaded, setLoaded] = useState(visible);
+  const [serveNonce, setServeNonce] = useState(0);
+  const loadedRef = useRef(loaded);
+  loadedRef.current = loaded;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: serveNonce re-runs preview_serve
   useEffect(() => {
     let cancelled = false;
     let token: string | null = null;
@@ -48,23 +52,33 @@ export function HtmlPreviewFrame({ path, rootHint, visible }: Props) {
       cancelled = true;
       if (token) void invoke("preview_release", { token }).catch(() => {});
     };
-  }, [path, rootHint]);
-
-  useEffect(() => {
-    if (visible) {
-      setLoaded(true);
-      return;
-    }
-    const t = setTimeout(() => setLoaded(false), SUSPEND_AFTER_MS);
-    return () => clearTimeout(t);
-  }, [visible]);
+  }, [path, rootHint, serveNonce]);
 
   const reload = useCallback(() => {
     setLoaded(true);
     setNonce((n) => n + 1);
   }, []);
 
-  useHtmlPreviewReload(served?.root ?? null, visible, reload);
+  const discardPendingReload = useHtmlPreviewReload(
+    served?.root ?? null,
+    visible,
+    reload,
+  );
+
+  useEffect(() => {
+    if (visible) {
+      if (!loadedRef.current) discardPendingReload();
+      setLoaded(true);
+      return;
+    }
+    const t = setTimeout(() => setLoaded(false), SUSPEND_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [visible, discardPendingReload]);
+
+  const onReloadClick = () => {
+    if (reloadAction(error) === "reserve") setServeNonce((n) => n + 1);
+    else reload();
+  };
 
   // The backend builds this URL from the canonical entry path, so a
   // non-canonical `path` prop (symlink, /var vs /private/var) still resolves.
@@ -91,7 +105,7 @@ export function HtmlPreviewFrame({ path, rootHint, visible }: Props) {
         </span>
         <button
           type="button"
-          onClick={reload}
+          onClick={onReloadClick}
           className="rounded px-1.5 py-0.5 hover:bg-accent/50"
         >
           Reload
