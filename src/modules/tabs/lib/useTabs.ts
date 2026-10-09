@@ -171,7 +171,7 @@ type CloseTabsPlanResult = {
   nextActiveId: number;
 };
 
-export function planMarkdownTabOpen(
+export function planRenderedTabOpen(
   tabs: Tab[],
   path: string,
   spaceId: string,
@@ -180,7 +180,7 @@ export function planMarkdownTabOpen(
   const pathKey = path.replace(/\\/g, "/");
   const existing = tabs.find(
     (tab) =>
-      tab.kind === "markdown" &&
+      (tab.kind === "markdown" || tab.kind === "editor") &&
       tab.spaceId === spaceId &&
       tab.path.replace(/\\/g, "/") === pathKey,
   );
@@ -972,7 +972,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   // openFileTab's setTabs(plan.tabs), which is built from the stale ref.
   const newMarkdownTab = useCallback((path: string) => {
     const curr = tabsRef.current;
-    const plan = planMarkdownTabOpen(
+    const plan = planRenderedTabOpen(
       curr,
       path,
       activeSpaceIdRef.current,
