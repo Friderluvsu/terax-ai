@@ -4,6 +4,7 @@ import type { FsReadResult, WorkspaceEnv } from "@/modules/workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { documentIo } from "./documentIo";
+import { mtimeChanged } from "./mtime";
 import { detectEol, type Eol, normalizeToLf, restoreEol } from "./eol";
 
 type ReadResult = FsReadResult;
@@ -74,7 +75,7 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
       const stat = await documentIo(env, path)
         .stat()
         .catch(() => null);
-      if (stat && stat.mtime !== known) {
+      if (stat && mtimeChanged(env, known, stat.mtime)) {
         const name = path.split(/[\\/]/).pop() ?? path;
         toast.warning("File changed on disk", {
           id: `save-conflict:${path}`,

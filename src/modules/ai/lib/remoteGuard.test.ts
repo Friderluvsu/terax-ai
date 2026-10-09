@@ -65,4 +65,13 @@ describe("remote deny-list", () => {
       { ok: false },
     );
   });
+  it("replaces the description of a stubbed tool", () => {
+    const tools = {
+      bash_run: { description: "Run a command", execute: async () => 1 },
+    };
+    const out = guardRemoteTools(tools, ssh, true) as typeof tools;
+    expect(out.bash_run.description).toMatch(
+      /Unavailable in this SSH workspace/,
+    );
+  });
 });

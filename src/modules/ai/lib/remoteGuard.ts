@@ -41,6 +41,7 @@ export function guardRemoteTools<T extends Record<string, unknown>>(
     if (!reason) continue;
     out[name] = {
       ...(out[name] as object),
+      description: `Unavailable in this SSH workspace: ${reason}`,
       needsApproval: false,
       execute: async () => ({ error: reason }),
     };

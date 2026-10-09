@@ -871,7 +871,7 @@ export const FileExplorer = memo(
                       Open in Source Control
                     </ContextMenuItem>
                   )}
-                  {menuTarget.isDir && onOpenGitHistory && (
+                  {caps.git && menuTarget.isDir && onOpenGitHistory && (
                     <ContextMenuItem
                       className={COMPACT_ITEM}
                       onSelect={() => onOpenGitHistory(menuTarget.path)}
@@ -974,7 +974,7 @@ export const FileExplorer = memo(
                       Open in Source Control
                     </ContextMenuItem>
                   )}
-                  {onOpenGitHistory && (
+                  {caps.git && onOpenGitHistory && (
                     <ContextMenuItem
                       className={COMPACT_ITEM}
                       onSelect={() => onOpenGitHistory(rootPath)}
