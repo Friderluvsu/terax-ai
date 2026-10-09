@@ -89,6 +89,13 @@ if [[ -z "$__TERAX_HOOKS_LOADED" ]]; then
     bindkey '\ef' emacs-forward-word
   fi
 
+  # Cmd+Backspace sends ^U; zsh's stock ^U kills the whole line, so map it to
+  # kill-to-line-start. Same stock-binding guard as above.
+  if (( $+widgets[backward-kill-line] )) \
+     && [[ "$(bindkey '^U')" == '"^U" kill-whole-line' ]]; then
+    bindkey '^U' backward-kill-line
+  fi
+
   _terax_precmd
 fi
 :
