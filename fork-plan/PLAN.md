@@ -422,6 +422,27 @@ critical/major/minor и конкретным исправлением. Не пе
   - "Run in Terminal" в проводнике;
   - кнопка Run в редакторе.
 
+#### P-01 · Доводка по замечаниям ревью W1
+- Модель: Sonnet · Ревью: нет · M · Зависит: E1-T01, E3-T06, E1-T10 (все влиты)
+- Мелкие замечания ревьюеров W1, собранные в одну задачу. Каждый пункт с тестом, если он меняет логику.
+- Шаги:
+  1. `src-tauri/src/modules/remote/ssh_config.rs`:
+     - (a) сохранять и восстанавливать текущий Host-блок вокруг `Include`, как OpenSSH (`readconf.c` возвращает `activep` после include). Тест: `Host a`, внутри `Include` файла с `Host b`, затем `User u`; `User` должен принадлежать `a`;
+     - (b) при раскрытии glob в `Include` пропускать имена, начинающиеся с `.`, если сам компонент шаблона не начинается с `.` (как glob(3)). Тест с `.foo.conf.swp`;
+     - (c) верхний `~/.ssh/config` читать, только если это обычный файл не больше 1 MiB; множество посещённых канонических путей, чтобы файл из нескольких Include разбирался один раз.
+  2. SSH-вкладка из палитры получает заголовок `ssh <alias>` через `customTitle` (сейчас она называется "private"). Добавить параметр заголовка в `newPrivateTab` или выставить `customTitle` после создания, как в `newAgentGroupTab`.
+  3. `src-tauri/src/modules/scripts.rs`:
+     - (a) `is_quarantined`: если `getxattr` вернул ошибку, `false` только при `ENOATTR`; любая другая ошибка считается карантином (fail closed). Тест на ветку ошибки через чистую функцию от кода ошибки;
+     - (b) `script_launch_info` требует, чтобы родительский каталог был авторизован (`WorkspaceRegistry::is_authorized`), как и `script_make_executable`;
+     - (c) `script_launch_info` дополнительно возвращает `hasShebang`, читая только первые 2 байта файла.
+  4. `src/app/App.tsx`, запуск скриптов:
+     - (a) вкладка скрипта получает `customTitle` с именем файла (`title` для терминала с cwd игнорируется, `tabs/lib/tabLabel.ts`);
+     - (b) несколько файлов из Finder обрабатываются строго по очереди (`for ... await`), чтобы подтверждения карантина не отменяли друг друга;
+     - (c) вынести решение в чистую `launchAction(path, setting, envKind): "run" | "edit"` в `src/modules/terminal/lib/runScript.ts` с тестом (run только для `.command`/`.tool`, при настройке `run`, в локальном окружении и после гидрации настроек) и использовать её в `openLaunchFiles`.
+  5. `src/modules/editor/RunScriptButton.tsx`: кнопка видна для `isRunnableScriptPath` или `hasShebang` из `script_launch_info` (любое расширение, не только без расширения); перепроверка, когда `dirty` переходит из true в false; без `fs_read_file` целиком.
+  6. E1-T01: пункты палитры и меню "New Blocks terminal" всегда открывают Blocks, а "New terminal" всегда Classic. Настройке `terminalDefaultMode` следуют только хоткеи Cmd+T / Cmd+Shift+T. Тест на `resolveNewTabKind` дополнить вариантом `explicit`.
+- Проверка: FE, RS.
+
 #### E1-T09 · (отложено) Точное начало ввода из Zig-ядра
 - Модель: Opus · Ревью: Opus · L · Зависит: E1-T06
 - Нужен Zig 0.16 и пересборка обоих WASM-артефактов (`packages/ghostty-core/adapted/UPSTREAM.md`). Payload `prompt_end` в `terax.zig:812-839` дополняется позицией курсора или pin.
