@@ -443,6 +443,24 @@ critical/major/minor и конкретным исправлением. Не пе
   6. E1-T01: пункты палитры и меню "New Blocks terminal" всегда открывают Blocks, а "New terminal" всегда Classic. Настройке `terminalDefaultMode` следуют только хоткеи Cmd+T / Cmd+Shift+T. Тест на `resolveNewTabKind` дополнить вариантом `explicit`.
 - Проверка: FE, RS.
 
+#### P-02 · Доводка по замечаниям ревью E1-T03, E1-T06, E2-T03
+- Модель: Sonnet · Ревью: нет · M · Зависит: E1-T03, E1-T06, E2-T03 (все влиты)
+- Только фронтенд. Каждый пункт с тестом.
+- Шаги:
+  1. `src/modules/terminal/ghostty/input/GhosttyInputController.ts`:
+     - (a) Option как Meta для «мёртвых» клавиш macOS (Option+E, U, I, N, `): WKWebView присылает `key === "Dead"`, и IME-guard возвращает раньше, чем срабатывает Meta. До guard: если `altKey`, нет композиции, режим Meta активен для этой стороны Option и `optionMetaBase(event)` даёт символ, то отправить `ESC <base>` и поглотить событие. Тесты: `key "Dead"`, `code "KeyU"` в режимах left и both; в режиме off поведение прежнее;
+     - (b) в `handleBlur` сбрасывать `altLeftDown`; тест: keyup левого Option потерян, blur, затем правый Option+буква печатает символ;
+     - (c) тесты: Option+Backspace с keyCode 229 даёт `\x17`; `key "Process"` со стрелкой вправо даёт `\x1bf`; Shift+Option+KeyB даёт `\x1bB`.
+  2. Клик по курсору (`input/cellClickCursor.ts` и обвязка в `useGhosttyTerminalSession.ts`):
+     - (a) тест колбэка `shouldOpenLink` на три случая: простой клик внутри группы строк ввода не открывает ссылку, Cmd+клик открывает, клик вне группы открывает;
+     - (b) тесты: ветка `pendingWrap` (cols=10, курсор на x=9 над непустой ячейкой, фаза input, delta учитывает +1) и группа из двух перенесённых строк.
+  3. `src/modules/html-preview/HtmlPreviewFrame.tsx` и `lib/useHtmlPreviewReload.ts`:
+     - (a) в состоянии ошибки кнопка Reload заново вызывает `preview_serve`, а не только меняет nonce;
+     - (b) после 30-секундной выгрузки скрытого фрейма показ монтирует его один раз: отложенная перезагрузка, накопленная за время скрытия, отбрасывается, потому что новый фрейм и так грузит свежий файл;
+     - (c) два события одного сохранения (`fs:file-written` и `fs:changed` через 150 мс плюс задержка наблюдателя) схлопываются надёжно: например, повторная перезагрузка подавляется, если с прошлой прошло меньше 1 секунды и mtime файла не изменился, или debounce увеличивается до 400 мс;
+     - (d) обратные слэши в путях на macOS и Linux не превращаются в `/` (это допустимый символ имени файла).
+- Проверка: FE.
+
 #### E1-T09 · (отложено) Точное начало ввода из Zig-ядра
 - Модель: Opus · Ревью: Opus · L · Зависит: E1-T06
 - Нужен Zig 0.16 и пересборка обоих WASM-артефактов (`packages/ghostty-core/adapted/UPSTREAM.md`). Payload `prompt_end` в `terax.zig:812-839` дополняется позицией курсора или pin.
