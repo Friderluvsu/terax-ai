@@ -47,6 +47,11 @@ export type GhosttySearchViewportSpan = {
   readonly selected: boolean;
 };
 
+export type GhosttyViewportLine = {
+  readonly cells: readonly string[];
+  readonly wrapped: boolean;
+};
+
 export interface GhosttyTerminalModelApi extends TerminalModel {
   isDisposed?(): boolean;
   renderCells(): TerminalCellReader;
@@ -102,6 +107,7 @@ export interface GhosttyTerminalModelApi extends TerminalModel {
   ): string;
   bufferCursorLine?(): number;
   readCellLine?(line: number): readonly string[];
+  viewportLine?(row: number): GhosttyViewportLine | null;
   blockSearchActive?(): boolean;
   setBlockSearchMatch?(
     match: { line: number; col: number; len: number } | null,

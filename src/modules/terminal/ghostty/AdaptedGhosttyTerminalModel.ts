@@ -536,6 +536,12 @@ export class AdaptedGhosttyTerminalModel implements GhosttyTerminalModelApi {
     return this.readBufferLine(line).cells;
   }
 
+  viewportLine(row: number): BufferLine | null {
+    this.assertLive();
+    if (!Number.isInteger(row) || row < 0 || row >= this.rowsValue) return null;
+    return snapshotRow(this.terminal, this.ensureRenderState(), row);
+  }
+
   bufferCursorLine(): number {
     this.assertLive();
     return this.terminal.bufferCursorLine();
