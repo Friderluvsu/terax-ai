@@ -42,6 +42,7 @@ export async function openPty(
   shell?: string,
   paneId?: number,
   env?: WorkspaceEnv,
+  remoteShellIntegration?: boolean,
 ): Promise<PtySession> {
   // Raw bytes preserve split UTF-8 and escape sequences across IPC.
   const onData = new Channel<ArrayBuffer>();
@@ -109,6 +110,7 @@ export async function openPty(
       blocks: blocks ?? false,
       shell: shell ?? null,
       paneId: paneId ?? null,
+      remoteShellIntegration: remoteShellIntegration ?? null,
       onData,
       onExit,
     });

@@ -6,6 +6,7 @@ pub mod exec;
 mod fail_closed_tests;
 pub mod quote;
 pub mod registry;
+pub mod shell_init;
 pub mod ssh_config;
 pub mod state;
 pub mod target;

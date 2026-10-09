@@ -16,6 +16,7 @@ use portable_pty::PtySize;
 use tauri::ipc::{Channel, Response};
 
 use crate::modules::control::ControlState;
+use crate::modules::remote::shell_init as remote_shell;
 use crate::modules::workspace::{user_spawn_cwd_or_home, WorkspaceEnv, WorkspaceRegistry};
 use session::Session;
 
@@ -64,12 +65,25 @@ pub async fn pty_open(
     blocks: Option<bool>,
     shell: Option<String>,
     pane_id: Option<u32>,
+    remote_shell_integration: Option<bool>,
     on_data: Channel<Response>,
     on_exit: Channel<i32>,
 ) -> Result<u32, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
     let blocks = blocks.unwrap_or(false);
-    let cwd = user_spawn_cwd_or_home(&registry, cwd.as_deref(), &workspace);
+    let (cwd, remote_pty) = match &workspace {
+        WorkspaceEnv::Ssh { .. } => (
+            remote_shell::spawn_cwd(cwd.as_deref()),
+            Some(remote_shell::pty_options(
+                &app,
+                remote_shell_integration.unwrap_or(true),
+            )?),
+        ),
+        _ => (
+            user_spawn_cwd_or_home(&registry, cwd.as_deref(), &workspace),
+            None,
+        ),
+    };
     let control_env = if control_env_allowed(&workspace) {
         pane_id.and_then(|pane_id| control.shell_env(pane_id))
     } else {
@@ -87,6 +101,7 @@ pub async fn pty_open(
             blocks,
             shell,
             control_env,
+            remote_pty,
             on_data,
             on_exit,
         )
@@ -247,6 +262,9 @@ pub fn pty_has_foreground_process(state: tauri::State<PtyState>, id: u32) -> Res
         log::warn!("pty_has_foreground_process: unknown session id={id}");
         "no session".to_string()
     })?;
+    if session.remote {
+        return Ok(true);
+    }
     let shell_pid = session.shell_pid;
     if shell_pid == 0 {
         return Ok(false);

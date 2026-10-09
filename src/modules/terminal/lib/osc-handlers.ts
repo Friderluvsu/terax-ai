@@ -1,4 +1,5 @@
 import { IS_WINDOWS } from "@/lib/platform";
+import type { WorkspaceEnv } from "@/modules/workspace";
 
 const MAX_OSC52_CLIPBOARD_BYTES = 1024 * 1024;
 
@@ -54,6 +55,13 @@ export function createOsc7HostFilter(opts: {
     if (pinned === null) pinned = h;
     return pinned === h;
   };
+}
+
+export function createSessionOsc7HostFilter(
+  env: WorkspaceEnv | undefined,
+  getLocalHostname: () => string | null,
+): (host: string) => boolean {
+  return createOsc7HostFilter({ ssh: env?.kind === "ssh", getLocalHostname });
 }
 
 export function parseOsc52Clipboard(data: string): string | null {

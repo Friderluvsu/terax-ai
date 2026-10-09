@@ -21,7 +21,7 @@ import { openPty, type PtySession } from "../lib/pty-bridge";
 import { writeTerminalClipboard } from "../lib/terminalClipboard";
 import { LatestClipboardWrite } from "@/modules/terminal/lib/LatestClipboardWrite";
 import { hostname } from "@tauri-apps/plugin-os";
-import { createOsc7HostFilter } from "@/modules/terminal/lib/osc-handlers";
+import { createSessionOsc7HostFilter } from "@/modules/terminal/lib/osc-handlers";
 import { GhosttySemanticEventRouter } from "./core/GhosttySemanticEventRouter";
 import { LongCommandTracker } from "./core/LongCommandTracker";
 import { PromptInputTracker } from "./core/PromptInputTracker";
@@ -677,10 +677,10 @@ async function initializeSessionGeneration(
   ]);
   if (!alive()) return;
 
-  const acceptHost = createOsc7HostFilter({
-    ssh: false,
-    getLocalHostname: () => localHostname,
-  });
+  const acceptHost = createSessionOsc7HostFilter(
+    session.env,
+    () => localHostname,
+  );
   const semanticEvents = new GhosttySemanticEventRouter(
     {
       onCwd: (cwd) => {
@@ -872,6 +872,7 @@ async function initializeSessionGeneration(
     preferences.terminalShell || undefined,
     session.leafId,
     session.env,
+    preferences.sshRemoteShellIntegration,
   );
   if (session.disposed || generation !== session.generation) {
     await pty.close();

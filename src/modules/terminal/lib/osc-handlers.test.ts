@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createOsc7HostFilter,
+  createSessionOsc7HostFilter,
   isLocalOsc7Host,
   parseOsc7,
   parseOsc52Clipboard,
@@ -49,6 +50,29 @@ describe("terminal semantic boundaries", () => {
     expect(accept("Dev-Box")).toBe(true);
     expect(accept("dev-box")).toBe(true);
     expect(accept("other")).toBe(false);
+  });
+
+  it("tracks the remote host's cwd in an ssh session", () => {
+    const onCwd = vi.fn();
+    const router = new GhosttySemanticEventRouter(
+      { onCwd },
+      createSessionOsc7HostFilter(
+        { kind: "ssh", host: "dev-box" },
+        () => "mac",
+      ),
+    );
+    router.handle({ type: "pwd", uri: "file://dev-box.example.com/srv/app" });
+    router.handle({ type: "pwd", uri: "file://other-box/etc" });
+    router.handle({ type: "pwd", uri: "file://dev-box.example.com/home/me" });
+    expect(onCwd.mock.calls).toEqual([["/srv/app"], ["/home/me"]]);
+  });
+
+  it("keeps the local host check outside ssh sessions", () => {
+    for (const env of [undefined, { kind: "local" } as const]) {
+      const accept = createSessionOsc7HostFilter(env, () => "mac");
+      expect(accept("dev-box")).toBe(false);
+      expect(accept("mac.local")).toBe(true);
+    }
   });
 
   it("filters foreign hosts in the router", () => {
