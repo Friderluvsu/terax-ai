@@ -20,6 +20,7 @@ import { openPty, type PtySession } from "../lib/pty-bridge";
 import { writeTerminalClipboard } from "../lib/terminalClipboard";
 import { LatestClipboardWrite } from "@/modules/terminal/lib/LatestClipboardWrite";
 import { GhosttySemanticEventRouter } from "./core/GhosttySemanticEventRouter";
+import { PromptInputTracker } from "./core/PromptInputTracker";
 import { getGhosttyCoreRuntime } from "./GhosttyCoreRuntime";
 import type { GhosttyTerminalModelApi } from "./GhosttyTerminalModel";
 import {
@@ -64,6 +65,7 @@ type GhosttySession = {
   initialCwd: string | undefined;
   lastCwd: string | null;
   model: GhosttyTerminalModelApi | null;
+  promptTracker: PromptInputTracker;
   surface: GhosttySurface | null;
   surfaceOptions: GhosttySurfaceBaseOptions | null;
   input: GhosttyInputController | null;
@@ -426,6 +428,7 @@ export async function respawnGhosttySession(
   ghosttyBlocks(leafId)?.detach();
   session.model?.dispose();
   session.model = null;
+  session.promptTracker.reset();
   session.callbacks.onModel?.(null);
   session.ptyResize.reset();
   session.writer.detach();
@@ -534,6 +537,7 @@ function ensureSession(
     initialCwd,
     lastCwd: null,
     model: null,
+    promptTracker: new PromptInputTracker(),
     surface: null,
     surfaceOptions: null,
     input: null,
@@ -583,6 +587,7 @@ function initializeSession(session: GhosttySession): Promise<void> {
         ghosttyBlocks(session.leafId)?.detach();
         session.model?.dispose();
         session.model = null;
+        session.promptTracker.reset();
         session.writer.clear();
         session.ptyResize.reset();
       }
@@ -671,6 +676,7 @@ async function initializeSessionGeneration(
     onReply: (bytes) => session.writer.enqueue(bytes),
     onEvent: (event) => {
       semanticEvents.handle(event);
+      session.promptTracker.handle(event);
       ghosttyBlocks(session.leafId)?.controller?.handle(
         event,
         session.lastCwd ?? session.initialCwd ?? "",
@@ -682,6 +688,7 @@ async function initializeSessionGeneration(
     return;
   }
   mark("modelReadyMs");
+  session.promptTracker.reset();
   session.model = model;
   session.callbacks.onModel?.(model);
   await ghosttyBlocks(session.leafId)?.attach(model, () =>
