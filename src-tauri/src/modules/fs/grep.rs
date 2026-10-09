@@ -14,7 +14,7 @@ use super::to_canon;
 use crate::modules::remote::search::{self as remote_search, CaseMode, Tool};
 use crate::modules::remote::RemoteState;
 use crate::modules::workspace::{local_path, WorkspaceEnv};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 const FILE_SIZE_CAP: u64 = 5 * 1024 * 1024;
 const DEFAULT_MAX_RESULTS: usize = 200;
@@ -364,8 +364,8 @@ pub fn fs_glob_local(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tauri::command(async)]
-pub fn fs_grep(
+#[tauri::command]
+pub async fn fs_grep(
     app: AppHandle,
     remote: State<'_, RemoteState>,
     pattern: String,
@@ -390,23 +390,32 @@ pub fn fs_grep(
             CaseMode::Sensitive
         };
         let globs = glob.unwrap_or_default();
-        return grep_remote(&dir, host, &root, &pattern, false, case, &globs, cap);
+        let host = host.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            grep_remote(&dir, &host, &root, &pattern, false, case, &globs, cap)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let _ = (&app, &remote);
-    fs_grep_local(
-        pattern,
-        root,
-        glob,
-        case_insensitive,
-        max_results,
-        workspace,
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_grep_local(
+            pattern,
+            root,
+            glob,
+            case_insensitive,
+            max_results,
+            workspace,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Interactive content search for the command palette. Treats the query as a
 /// literal (smart-case), and self-cancels when a newer query arrives.
-#[tauri::command(async)]
-pub fn fs_grep_interactive(
+#[tauri::command]
+pub async fn fs_grep_interactive(
     app: AppHandle,
     remote: State<'_, RemoteState>,
     state: State<'_, ContentSearchState>,
@@ -425,22 +434,44 @@ pub fn fs_grep_interactive(
         let cap = max_results
             .unwrap_or(DEFAULT_MAX_RESULTS)
             .clamp(1, HARD_MAX_RESULTS);
-        let res = grep_remote(&dir, host, &root, &pattern, true, CaseMode::Smart, &[], cap)?;
-        if state.generation.load(Ordering::SeqCst) != my_gen {
-            return Ok(GrepResponse {
-                hits: Vec::new(),
-                truncated: false,
-                files_scanned: 0,
-            });
-        }
-        return Ok(res);
+        let host = host.clone();
+        let handle = app.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            let res = grep_remote(
+                &dir,
+                &host,
+                &root,
+                &pattern,
+                true,
+                CaseMode::Smart,
+                &[],
+                cap,
+            )?;
+            let state = handle.state::<ContentSearchState>();
+            if state.generation.load(Ordering::SeqCst) != my_gen {
+                return Ok(GrepResponse {
+                    hits: Vec::new(),
+                    truncated: false,
+                    files_scanned: 0,
+                });
+            }
+            Ok(res)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
-    let _ = (&app, &remote);
-    grep_interactive_local(&state, pattern, root, max_results, workspace)
+    let _ = &remote;
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<ContentSearchState>();
+        grep_interactive_local(&state, pattern, root, max_results, workspace)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-#[tauri::command(async)]
-pub fn fs_glob(
+#[tauri::command]
+pub async fn fs_glob(
     app: AppHandle,
     remote: State<'_, RemoteState>,
     pattern: String,
@@ -460,23 +491,32 @@ pub fn fs_glob(
             .map_err(|e| format!("bad glob: {e}"))?
             .compile_matcher();
         let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
-        let listing = remote_search::list_files(&dir, host, &root, false, None)?;
-        let mut truncated = listing.truncated;
-        let mut hits = Vec::new();
-        for rel in listing.files.into_iter().filter(|r| set.is_match(r)) {
-            if hits.len() >= cap {
-                truncated = true;
-                break;
+        let host = host.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            let listing = remote_search::list_files(&dir, &host, &root, false, None)?;
+            let mut truncated = listing.truncated;
+            let mut hits = Vec::new();
+            for rel in listing.files.into_iter().filter(|r| set.is_match(r)) {
+                if hits.len() >= cap {
+                    truncated = true;
+                    break;
+                }
+                hits.push(GlobHit {
+                    path: remote_search::join_display(&root, &rel),
+                    rel,
+                });
             }
-            hits.push(GlobHit {
-                path: remote_search::join_display(&root, &rel),
-                rel,
-            });
-        }
-        return Ok(GlobResponse { hits, truncated });
+            Ok(GlobResponse { hits, truncated })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let _ = (&app, &remote);
-    fs_glob_local(pattern, root, max_results, workspace)
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_glob_local(pattern, root, max_results, workspace)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn display_path(

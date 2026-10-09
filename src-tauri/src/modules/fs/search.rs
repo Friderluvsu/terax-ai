@@ -271,8 +271,8 @@ pub fn fs_list_files_local(
     Ok(ListFilesResult { files, truncated })
 }
 
-#[tauri::command(async)]
-pub fn fs_search(
+#[tauri::command]
+pub async fn fs_search(
     app: AppHandle,
     remote: State<'_, RemoteState>,
     root: String,
@@ -283,7 +283,7 @@ pub fn fs_search(
 ) -> Result<SearchResult, String> {
     #[cfg(unix)]
     if let Some(WorkspaceEnv::Ssh { host }) = &workspace {
-        let q = query.trim();
+        let q = query.trim().to_string();
         if q.is_empty() {
             return Ok(SearchResult {
                 hits: Vec::new(),
@@ -292,14 +292,24 @@ pub fn fs_search(
         }
         let cap = limit.unwrap_or(200).min(1000);
         let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
-        return search_remote(&dir, host, &root, q, cap, show_hidden.unwrap_or(false));
+        let host = host.clone();
+        let show_hidden = show_hidden.unwrap_or(false);
+        return tauri::async_runtime::spawn_blocking(move || {
+            search_remote(&dir, &host, &root, &q, cap, show_hidden)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let _ = (&app, &remote);
-    fs_search_local(root, query, limit, workspace, show_hidden)
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_search_local(root, query, limit, workspace, show_hidden)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-#[tauri::command(async)]
-pub fn fs_list_files(
+#[tauri::command]
+pub async fn fs_list_files(
     app: AppHandle,
     remote: State<'_, RemoteState>,
     root: String,
@@ -317,24 +327,28 @@ pub fn fs_list_files(
             .unwrap_or(LIST_DEFAULT_DEPTH)
             .clamp(1, LIST_HARD_DEPTH);
         let dir = remote_search::socket_dir_for(&app.config().identifier, &remote, host)?;
-        let listing = remote_search::list_files(
-            &dir,
-            host,
-            &root,
-            show_hidden.unwrap_or(false),
-            Some(depth),
-        )?;
-        let mut files = listing.files;
-        let mut truncated = listing.truncated;
-        if files.len() > cap {
-            files.truncate(cap);
-            truncated = true;
-        }
-        files.sort_by_key(|a| a.to_lowercase());
-        return Ok(ListFilesResult { files, truncated });
+        let host = host.clone();
+        let show_hidden = show_hidden.unwrap_or(false);
+        return tauri::async_runtime::spawn_blocking(move || {
+            let listing = remote_search::list_files(&dir, &host, &root, show_hidden, Some(depth))?;
+            let mut files = listing.files;
+            let mut truncated = listing.truncated;
+            if files.len() > cap {
+                files.truncate(cap);
+                truncated = true;
+            }
+            files.sort_by_key(|a| a.to_lowercase());
+            Ok(ListFilesResult { files, truncated })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let _ = (&app, &remote);
-    fs_list_files_local(root, limit, max_depth, workspace, show_hidden)
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_list_files_local(root, limit, max_depth, workspace, show_hidden)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn display_path(

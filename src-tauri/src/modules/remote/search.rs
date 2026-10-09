@@ -115,7 +115,12 @@ fn rg_prune_globs() -> String {
         .join(" ")
 }
 
-pub fn list_script(root: &str, show_hidden: bool, max_depth: Option<usize>) -> String {
+pub fn list_script(
+    root: &str,
+    show_hidden: bool,
+    max_depth: Option<usize>,
+    max_output: usize,
+) -> String {
     let mut rg = format!(
         "rg --no-config --no-messages --files -0 {}",
         rg_prune_globs()
@@ -130,10 +135,10 @@ pub fn list_script(root: &str, show_hidden: bool, max_depth: Option<usize>) -> S
         "cd -- {root} || exit {NOT_A_DIR}\n\
          if command -v rg >/dev/null 2>&1; then\n\
          printf 'rg\\n'\n\
-         {rg} -- . </dev/null 2>/dev/null\n\
+         {{ {rg} -- . </dev/null 2>/dev/null; }} | head -c {max_output}\n\
          else\n\
          printf 'find\\n'\n\
-         {find} </dev/null 2>/dev/null\n\
+         {{ {find} </dev/null 2>/dev/null; }} | head -c {max_output}\n\
          fi\n\
          exit 0\n",
         root = posix_quote(root),
@@ -147,6 +152,7 @@ pub fn grep_script(
     literal: bool,
     case: CaseMode,
     globs: &[String],
+    max_output: usize,
 ) -> String {
     let mut rg = format!(
         "rg --no-config --no-messages --json -n --max-filesize {}K {}",
@@ -181,10 +187,10 @@ pub fn grep_script(
         "cd -- {root} || exit {NOT_A_DIR}\n\
          if command -v rg >/dev/null 2>&1; then\n\
          printf 'rg\\n'\n\
-         {rg} -e {pat} -- . </dev/null 2>/dev/null\n\
+         {{ {rg} -e {pat} -- . </dev/null 2>/dev/null; }} | head -c {max_output}\n\
          else\n\
          printf 'find\\n'\n\
-         {find} 2>/dev/null | xargs -0 {grep} -e {pat} /dev/null 2>/dev/null\n\
+         {{ {find} 2>/dev/null | xargs -0 {grep} -e {pat} /dev/null 2>/dev/null; }} | head -c {max_output}\n\
          fi\n\
          exit 0\n",
         root = posix_quote(root),
@@ -354,7 +360,7 @@ pub fn list_files(
     max_depth: Option<usize>,
 ) -> Result<Listing, String> {
     check_root(root)?;
-    let script = list_script(root, show_hidden, max_depth);
+    let script = list_script(root, show_hidden, max_depth, LIST_MAX_OUTPUT);
     let out = run_script(dir, host, root, &script, LIST_TIMEOUT, LIST_MAX_OUTPUT)?;
     parse_file_list(&out.stdout, out.truncated)
 }
@@ -369,7 +375,7 @@ pub fn grep(
     globs: &[String],
 ) -> Result<GrepOutput, String> {
     check_root(root)?;
-    let script = grep_script(root, pattern, literal, case, globs);
+    let script = grep_script(root, pattern, literal, case, globs, GREP_MAX_OUTPUT);
     let out = run_script(dir, host, root, &script, GREP_TIMEOUT, GREP_MAX_OUTPUT)?;
     parse_grep_output(&out.stdout, out.truncated)
 }
@@ -487,7 +493,7 @@ mod tests {
     #[test]
     fn grep_script_quotes_hostile_pattern() {
         let pat = "it's $HOME `id` a b";
-        let s = grep_script("/srv/my dir", pat, true, CaseMode::Sensitive, &[]);
+        let s = grep_script("/srv/my dir", pat, true, CaseMode::Sensitive, &[], 1 << 20);
         assert!(s.contains(&format!("-e {}", posix_quote(pat))));
         assert!(s.contains("cd -- '/srv/my dir'"));
         assert!(s.contains("'it'\\''s $HOME `id` a b'"));
@@ -497,26 +503,26 @@ mod tests {
     #[test]
     fn grep_script_flags() {
         let globs = vec!["*.rs".to_string(), "it's".to_string()];
-        let s = grep_script("/r", "Abc", false, CaseMode::Smart, &globs);
+        let s = grep_script("/r", "Abc", false, CaseMode::Smart, &globs, 1 << 20);
         assert!(s.contains("-S"));
         assert!(s.contains("grep -nIH -E -e"));
         assert!(!s.contains("grep -nIH -E -i"));
         assert!(s.contains("-g '*.rs'"));
         assert!(s.contains("-g 'it'\\''s'"));
-        let s = grep_script("/r", "abc", true, CaseMode::Smart, &[]);
+        let s = grep_script("/r", "abc", true, CaseMode::Smart, &[], 1 << 20);
         assert!(s.contains("grep -nIH -F -i"));
-        let s = grep_script("/r", "abc", true, CaseMode::Insensitive, &[]);
+        let s = grep_script("/r", "abc", true, CaseMode::Insensitive, &[], 1 << 20);
         assert!(s.contains("rg --no-config --no-messages --json -n") && s.contains(" -F -i"));
     }
 
     #[test]
     fn list_script_options() {
-        let s = list_script("/r", true, Some(4));
+        let s = list_script("/r", true, Some(4), 1 << 20);
         assert!(s.contains("--hidden"));
         assert!(s.contains("--max-depth 4"));
         assert!(s.contains("find . -maxdepth 4"));
         assert!(!s.contains("-name '.*'"));
-        let s = list_script("/r", false, None);
+        let s = list_script("/r", false, None, 1 << 20);
         assert!(!s.contains("--hidden"));
         assert!(s.contains("-name '.*'"));
         assert!(s.contains("-g '!node_modules'"));
@@ -565,17 +571,55 @@ mod tests {
         std::fs::write(sub.join(".hid.txt"), "hello\n").unwrap();
         let r = sub.to_str().unwrap();
 
-        let l = parse_file_list(&run_local(&list_script(r, false, None)), false).unwrap();
+        let l = parse_file_list(&run_local(&list_script(r, false, None, 1 << 20)), false).unwrap();
         assert_eq!(l.files, vec!["a b.txt"]);
-        let l = parse_file_list(&run_local(&list_script(r, true, None)), false).unwrap();
+        let l = parse_file_list(&run_local(&list_script(r, true, None, 1 << 20)), false).unwrap();
         let mut f = l.files;
         f.sort();
         assert_eq!(f, vec![".hid.txt", "a b.txt"]);
 
-        let s = grep_script(r, "'World' $HOME", true, CaseMode::Sensitive, &[]);
+        let s = grep_script(r, "'World' $HOME", true, CaseMode::Sensitive, &[], 1 << 20);
         let g = parse_grep_output(&run_local(&s), false).unwrap();
         assert_eq!(g.hits.len(), 1);
         assert_eq!(g.hits[0].rel, "a b.txt");
         assert_eq!(g.hits[0].line, 1);
+    }
+
+    #[test]
+    fn scripts_bound_output_with_head() {
+        assert!(list_script("/r", false, None, 4096).contains("| head -c 4096"));
+        assert!(
+            grep_script("/r", "x", true, CaseMode::Sensitive, &[], 4096)
+                .matches("| head -c 4096")
+                .count()
+                == 2
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oversized_output_is_cut_and_marked_truncated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        for i in 0..3000 {
+            std::fs::write(root.join(format!("file_number_{i}.txt")), "hit\n").unwrap();
+        }
+        let r = root.to_str().unwrap();
+        let cap = 2048;
+        let started = std::time::Instant::now();
+        let out = run_local(&list_script(r, false, None, cap));
+        assert!(started.elapsed() < Duration::from_secs(20));
+        // Tool marker line plus at most `cap` body bytes; exec flags this as truncated.
+        assert!(out.len() > cap && out.len() <= cap + 8);
+        let l = parse_file_list(&out, true).unwrap();
+        assert!(l.truncated);
+        assert!(!l.files.is_empty() && l.files.len() < 3000);
+        assert!(l.files.iter().all(|f| f.starts_with("file_number_")));
+
+        let s = grep_script(r, "hit", true, CaseMode::Sensitive, &[], cap);
+        let out = run_local(&s);
+        assert!(out.len() > cap && out.len() <= cap + 8);
+        let g = parse_grep_output(&out, true).unwrap();
+        assert!(g.truncated);
     }
 }
