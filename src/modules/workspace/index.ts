@@ -1,5 +1,9 @@
 export {
+  assertNever,
   currentWorkspaceScopeKey,
+  envCaps,
+  sameWorkspaceEnv,
+  type EnvCaps,
   currentWorkspaceEnv,
   getWslHome,
   LOCAL_WORKSPACE,

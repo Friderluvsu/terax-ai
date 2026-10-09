@@ -3,15 +3,24 @@ import { homeDir } from "@tauri-apps/api/path";
 import { native } from "@/modules/ai/lib/native";
 import type { Tab } from "@/modules/tabs";
 import {
+  assertNever,
   getWslHome,
   LOCAL_WORKSPACE,
+  sameWorkspaceEnv,
   type WorkspaceEnv,
 } from "@/modules/workspace";
 
 async function resolveEnvHome(env: WorkspaceEnv): Promise<string> {
-  return env.kind === "wsl"
-    ? getWslHome(env.distro)
-    : (await homeDir()).replace(/\\/g, "/");
+  switch (env.kind) {
+    case "local":
+      return (await homeDir()).replace(/\\/g, "/");
+    case "wsl":
+      return getWslHome(env.distro);
+    case "ssh":
+      throw new Error("SSH workspaces are not supported yet");
+    default:
+      return assertNever(env);
+  }
 }
 
 type Params = {
@@ -73,13 +82,7 @@ export function useWorkspaceSwitcher({
 
   const switchWorkspace = useCallback(
     async (env: WorkspaceEnv): Promise<boolean> => {
-      if (
-        env.kind === workspaceEnv.kind &&
-        (env.kind === "local" ||
-          (workspaceEnv.kind === "wsl" && env.distro === workspaceEnv.distro))
-      ) {
-        return false;
-      }
+      if (sameWorkspaceEnv(env, workspaceEnv)) return false;
       const dirty = tabsRef.current.some((t) => t.kind === "editor" && t.dirty);
       if (dirty) {
         window.alert(

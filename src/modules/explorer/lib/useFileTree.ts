@@ -57,9 +57,18 @@ export function dirname(path: string): string {
 const EXPANSION_CACHE_LIMIT = 8;
 const expansionCache = new Map<string, string[]>();
 
-function rememberExpansion(root: string, expanded: Set<string>): void {
-  expansionCache.delete(root);
-  if (expanded.size > 0) expansionCache.set(root, [...expanded]);
+function expansionKey(workspaceKey: string, root: string): string {
+  return `${workspaceKey}\0${root}`;
+}
+
+function rememberExpansion(
+  workspaceKey: string,
+  root: string,
+  expanded: Set<string>,
+): void {
+  const key = expansionKey(workspaceKey, root);
+  expansionCache.delete(key);
+  if (expanded.size > 0) expansionCache.set(key, [...expanded]);
   while (expansionCache.size > EXPANSION_CACHE_LIMIT) {
     const oldest = expansionCache.keys().next().value;
     if (oldest === undefined) break;
@@ -67,11 +76,12 @@ function rememberExpansion(root: string, expanded: Set<string>): void {
   }
 }
 
-function recallExpansion(root: string): string[] {
-  const v = expansionCache.get(root);
+function recallExpansion(workspaceKey: string, root: string): string[] {
+  const key = expansionKey(workspaceKey, root);
+  const v = expansionCache.get(key);
   if (!v) return [];
-  expansionCache.delete(root);
-  expansionCache.set(root, v);
+  expansionCache.delete(key);
+  expansionCache.set(key, v);
   return v;
 }
 
@@ -251,7 +261,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     setPendingCreate(null);
     setRenaming(null);
 
-    const restored = recallExpansion(rootPath);
+    const restored = recallExpansion(workspaceKey, rootPath);
     setExpanded(new Set(restored));
     setNodes({});
     // Sync the ref synchronously: nodesRef only updates after the next render,
@@ -268,13 +278,13 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     watchAdd(toWatch);
 
     return () => {
-      rememberExpansion(rootPath, expandedRef.current);
+      rememberExpansion(workspaceKey, rootPath, expandedRef.current);
       if (watchedRef.current.size > 0) {
         watchRemove([...watchedRef.current]);
         watchedRef.current.clear();
       }
     };
-  }, [rootPath, fetchChildren]);
+  }, [rootPath, workspaceKey, fetchChildren]);
 
   useEffect(() => {
     let alive = true;

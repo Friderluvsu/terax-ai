@@ -4,7 +4,8 @@ import { setLastWslDistro } from "@/modules/settings/store";
 
 export type WorkspaceEnv =
   | { kind: "local" }
-  | { kind: "wsl"; distro: string };
+  | { kind: "wsl"; distro: string }
+  | { kind: "ssh"; host: string };
 
 export type WslDistro = {
   name: string;
@@ -49,14 +50,94 @@ export function currentWorkspaceEnv(): WorkspaceEnv {
   return useWorkspaceEnvStore.getState().env;
 }
 
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled workspace env: ${JSON.stringify(value)}`);
+}
+
 export function workspaceScopeKey(env: WorkspaceEnv): string {
-  return env.kind === "wsl" ? `wsl:${env.distro}` : "local";
+  switch (env.kind) {
+    case "local":
+      return "local";
+    case "wsl":
+      return `wsl:${env.distro}`;
+    case "ssh":
+      return `ssh:${env.host}`;
+    default:
+      return assertNever(env);
+  }
 }
 
 export function parseWorkspaceScopeKey(key: string): WorkspaceEnv {
-  return key.startsWith("wsl:")
-    ? { kind: "wsl", distro: key.slice("wsl:".length) }
-    : LOCAL_WORKSPACE;
+  if (key.startsWith("wsl:")) {
+    return { kind: "wsl", distro: key.slice("wsl:".length) };
+  }
+  if (key.startsWith("ssh:")) {
+    return { kind: "ssh", host: key.slice("ssh:".length) };
+  }
+  return LOCAL_WORKSPACE;
+}
+
+export function sameWorkspaceEnv(a: WorkspaceEnv, b: WorkspaceEnv): boolean {
+  return workspaceScopeKey(a) === workspaceScopeKey(b);
+}
+
+export type EnvCaps = {
+  watch: boolean;
+  gitDecorations: boolean;
+  reveal: boolean;
+  mediaPreview: boolean;
+  htmlPreview: boolean;
+  lsp: boolean;
+  git: boolean;
+  formatOnSave: boolean;
+  aiShell: boolean;
+  aiWrite: boolean;
+};
+
+const LOCAL_CAPS: EnvCaps = {
+  watch: true,
+  gitDecorations: true,
+  reveal: true,
+  mediaPreview: true,
+  htmlPreview: true,
+  lsp: true,
+  git: true,
+  formatOnSave: true,
+  aiShell: true,
+  aiWrite: true,
+};
+
+const WSL_CAPS: EnvCaps = {
+  ...LOCAL_CAPS,
+  reveal: false,
+  htmlPreview: false,
+  lsp: false,
+};
+
+const SSH_CAPS: EnvCaps = {
+  watch: false,
+  gitDecorations: false,
+  reveal: false,
+  mediaPreview: false,
+  htmlPreview: false,
+  lsp: false,
+  git: false,
+  formatOnSave: false,
+  aiShell: false,
+  aiWrite: false,
+};
+
+export function envCaps(env: WorkspaceEnv): EnvCaps {
+  switch (env.kind) {
+    case "local":
+      return LOCAL_CAPS;
+    case "wsl":
+      return WSL_CAPS;
+    case "ssh":
+      return SSH_CAPS;
+    default:
+      return assertNever(env);
+  }
 }
 
 export function currentWorkspaceScopeKey(): string {
