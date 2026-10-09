@@ -10,6 +10,7 @@ pub mod net;
 pub mod proc;
 pub mod remote;
 pub mod pty;
+pub mod scripts;
 pub mod secrets;
 pub mod security;
 pub mod shell;

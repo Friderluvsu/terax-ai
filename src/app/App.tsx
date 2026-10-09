@@ -7,6 +7,12 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { consumeLaunchFiles, getLaunchDir } from "@/lib/launchDir";
 import { quoteShellArg } from "@/lib/shellQuote";
+import {
+  buildRunInput,
+  isLaunchRunnable,
+  scriptDirAndName,
+} from "@/modules/terminal/lib/runScript";
+import { toast } from "sonner";
 import { usePresence } from "@/lib/usePresence";
 import { useZoom } from "@/lib/useZoom";
 import { isMarkdownPath } from "@/lib/utils";
@@ -126,6 +132,7 @@ import {
   useState,
 } from "react";
 import { CloseDialogs } from "./components/CloseDialogs";
+import { ScriptQuarantineDialog } from "./components/ScriptQuarantineDialog";
 import {
   TOGGLE_BLOCK_INPUT_EVENT,
   WorkspaceInputBar,
@@ -704,11 +711,104 @@ export default function App() {
     [openFileTab, newMarkdownTab],
   );
 
-  const openLaunchFiles = useCallback(
-    (paths: string[]) => {
-      for (const path of paths) handleOpenFile(path, true);
+  const [quarantinePath, setQuarantinePath] = useState<string | null>(null);
+  const quarantineResolveRef = useRef<((run: boolean) => void) | null>(null);
+
+  const answerQuarantine = useCallback((run: boolean) => {
+    quarantineResolveRef.current?.(run);
+    quarantineResolveRef.current = null;
+    setQuarantinePath(null);
+  }, []);
+
+  const confirmQuarantine = useCallback(
+    (path: string) =>
+      new Promise<boolean>((resolve) => {
+        quarantineResolveRef.current?.(false);
+        quarantineResolveRef.current = resolve;
+        setQuarantinePath(path);
+      }),
+    [],
+  );
+
+  const startScriptTab = useCallback(
+    (path: string) => {
+      const { dir, name } = scriptDirAndName(path);
+      const tabId = newTab(dir);
+      updateTab(tabId, { title: name });
+      void (async () => {
+        for (let i = 0; i < 40; i++) {
+          const tab = tabsRef.current.find((x) => x.id === tabId);
+          if (tab && tab.kind === "terminal") {
+            await whenSessionReady(tab.activeLeafId);
+            if (!writeToSession(tab.activeLeafId, buildRunInput(path))) {
+              console.error(`[terax] script terminal closed before run`);
+            }
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      })();
     },
-    [handleOpenFile],
+    [newTab, updateTab],
+  );
+
+  const runScriptInNewTab = useCallback(
+    async (path: string) => {
+      const name = scriptDirAndName(path).name;
+      try {
+        const info = await invoke<{
+          executable: boolean;
+          quarantined: boolean;
+        }>("script_launch_info", { path });
+        if (info.quarantined && !(await confirmQuarantine(path))) return;
+        if (!info.executable) {
+          toast(`${name} is not executable`, {
+            duration: 15000,
+            action: {
+              label: "Make executable and run",
+              onClick: () => {
+                invoke("script_make_executable", { path })
+                  .then(() => startScriptTab(path))
+                  .catch((e) =>
+                    toast.error(`Could not change permissions: ${e}`),
+                  );
+              },
+            },
+            cancel: {
+              label: "Open in editor",
+              onClick: () => handleOpenFile(path, true),
+            },
+          });
+          return;
+        }
+        startScriptTab(path);
+      } catch (e) {
+        toast.error(`Could not run ${name}: ${e}`);
+      }
+    },
+    [confirmQuarantine, startScriptTab, handleOpenFile],
+  );
+
+  const bootedRef = useRef(booted);
+  bootedRef.current = booted;
+
+  const openLaunchFiles = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      // Prefs may not be hydrated on a cold start; never fail open to "run".
+      await usePreferencesStore.getState().init().catch(() => {});
+      for (const path of paths) {
+        const prefs = usePreferencesStore.getState();
+        const runnable =
+          isLaunchRunnable(path) &&
+          prefs.hydrated &&
+          prefs.launchCommandFiles === "run" &&
+          useWorkspaceEnvStore.getState().env.kind === "local";
+        if (runnable) void runScriptInNewTab(path);
+        else handleOpenFile(path, true);
+      }
+    },
+    [handleOpenFile, runScriptInNewTab],
   );
 
   // Warm start: the backend emits once the window already exists. Attach on
@@ -718,8 +818,14 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     (async () => {
-      const off = await listen<string[]>("terax:open-file", (e) => {
-        openLaunchFiles(e.payload);
+      // Ignore the payload: the backend also fills the drain-once state, and
+      // draining it keeps script execution exactly-once. Before boot the boot
+      // drain below picks the files up.
+      const off = await listen<string[]>("terax:open-file", () => {
+        if (!bootedRef.current) return;
+        void (async () => {
+          await openLaunchFiles(await consumeLaunchFiles());
+        })();
       });
       if (disposed) off();
       else unlisten = off;
@@ -739,7 +845,7 @@ export default function App() {
   useEffect(() => {
     if (!booted) return;
     void (async () => {
-      openLaunchFiles(await consumeLaunchFiles());
+      await openLaunchFiles(await consumeLaunchFiles());
     })();
   }, [booted, openLaunchFiles]);
 
@@ -1499,6 +1605,11 @@ export default function App() {
                           onPathsDeleted={handlePathsDeleted}
                           canReplacePath={canReplaceExplorerPath}
                           onRevealInTerminal={cdInNewTab}
+                          onRunScript={
+                            workspaceEnv.kind === "local"
+                              ? runScriptInNewTab
+                              : undefined
+                          }
                           onOpenInSourceControl={
                             handleOpenRepositoryInSourceControl
                           }
@@ -1553,6 +1664,7 @@ export default function App() {
                         onOpenCommitFile={openCommitFileDiffTab}
                         onGitHistorySearchHandle={setGitHistoryHandle}
                         onSetMarkdownView={setMarkdownView}
+                        onRunScript={runScriptInNewTab}
                       />
                     </div>
 
@@ -1643,6 +1755,11 @@ export default function App() {
           />
 
           {!FORK_UPDATER_DISABLED && <UpdaterDialog />}
+
+          <ScriptQuarantineDialog
+            path={quarantinePath}
+            onAnswer={answerQuarantine}
+          />
 
           <CloseDialogs
             tabs={tabs}

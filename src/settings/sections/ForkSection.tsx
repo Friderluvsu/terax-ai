@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/select";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
+  setLaunchCommandFiles,
   setTerminalDefaultMode,
   type TerminalDefaultMode,
 } from "@/modules/settings/store";
@@ -20,6 +21,7 @@ const NEW_TAB_MODES: { value: TerminalDefaultMode; label: string }[] = [
 
 export function ForkSection() {
   const newTabMode = usePreferencesStore((s) => s.terminalDefaultMode);
+  const launchCommandFiles = usePreferencesStore((s) => s.launchCommandFiles);
 
   return (
     <div className="flex flex-col gap-6">
@@ -49,6 +51,25 @@ export function ForkSection() {
                   {m.label}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <SettingRow
+          title="Command files from Finder"
+          description="What happens when a .command or .tool file is opened with Terax from Finder."
+        >
+          <Select
+            value={launchCommandFiles}
+            onValueChange={(value) =>
+              void setLaunchCommandFiles(value === "edit" ? "edit" : "run")
+            }
+          >
+            <SelectTrigger className="h-8 w-36 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="run">Run in terminal</SelectItem>
+              <SelectItem value="edit">Open in editor</SelectItem>
             </SelectContent>
           </Select>
         </SettingRow>

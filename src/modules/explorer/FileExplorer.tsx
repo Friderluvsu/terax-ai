@@ -52,6 +52,7 @@ import { useGlobalShortcuts } from "@/modules/shortcuts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { GitStatusSnapshot } from "@/modules/ai/lib/native";
 import type { TerminalPathDropTarget } from "@/modules/terminal";
+import { isRunnableScriptPath } from "@/modules/terminal/lib/runScript";
 
 export type FileExplorerHandle = {
   focus: () => void;
@@ -67,6 +68,7 @@ type Props = {
   onPathsDeleted?: (paths: string[]) => void;
   canReplacePath?: (path: string) => boolean;
   onRevealInTerminal?: (path: string) => void;
+  onRunScript?: (path: string) => void;
   onOpenInSourceControl?: (path: string) => void;
   onOpenGitHistory?: (path: string) => void;
   onAttachToAgent?: (path: string) => void;
@@ -208,6 +210,7 @@ export const FileExplorer = memo(
       onPathsDeleted,
       canReplacePath,
       onRevealInTerminal,
+      onRunScript,
       onOpenInSourceControl,
       onOpenGitHistory,
       onAttachToAgent,
@@ -823,6 +826,16 @@ export const FileExplorer = memo(
                       Open
                     </ContextMenuItem>
                   )}
+                  {!menuTarget.isDir &&
+                    onRunScript &&
+                    isRunnableScriptPath(menuTarget.path) && (
+                      <ContextMenuItem
+                        className={COMPACT_ITEM}
+                        onSelect={() => onRunScript(menuTarget.path)}
+                      >
+                        Run in Terminal
+                      </ContextMenuItem>
+                    )}
                   {menuTarget.isDir && onRevealInTerminal && (
                     <ContextMenuItem
                       className={COMPACT_ITEM}
