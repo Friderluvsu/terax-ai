@@ -761,12 +761,20 @@ export default function App() {
     [confirmQuarantine, startScriptTab, handleOpenFile],
   );
 
+  const bootedRef = useRef(booted);
+  bootedRef.current = booted;
+
   const openLaunchFiles = useCallback(
-    (paths: string[]) => {
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      // Prefs may not be hydrated on a cold start; never fail open to "run".
+      await usePreferencesStore.getState().init().catch(() => {});
       for (const path of paths) {
+        const prefs = usePreferencesStore.getState();
         const runnable =
           isLaunchRunnable(path) &&
-          usePreferencesStore.getState().launchCommandFiles === "run" &&
+          prefs.hydrated &&
+          prefs.launchCommandFiles === "run" &&
           useWorkspaceEnvStore.getState().env.kind === "local";
         if (runnable) void runScriptInNewTab(path);
         else handleOpenFile(path, true);
@@ -782,8 +790,14 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     (async () => {
-      const off = await listen<string[]>("terax:open-file", (e) => {
-        openLaunchFiles(e.payload);
+      // Ignore the payload: the backend also fills the drain-once state, and
+      // draining it keeps script execution exactly-once. Before boot the boot
+      // drain below picks the files up.
+      const off = await listen<string[]>("terax:open-file", () => {
+        if (!bootedRef.current) return;
+        void (async () => {
+          await openLaunchFiles(await consumeLaunchFiles());
+        })();
       });
       if (disposed) off();
       else unlisten = off;
@@ -803,7 +817,7 @@ export default function App() {
   useEffect(() => {
     if (!booted) return;
     void (async () => {
-      openLaunchFiles(await consumeLaunchFiles());
+      await openLaunchFiles(await consumeLaunchFiles());
     })();
   }, [booted, openLaunchFiles]);
 
