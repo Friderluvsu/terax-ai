@@ -1,5 +1,58 @@
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import {
+  setTerminalDefaultMode,
+  type TerminalDefaultMode,
+} from "@/modules/settings/store";
 import { SectionHeader } from "../components/SectionHeader";
+import { SettingRow } from "../components/SettingRow";
+
+const NEW_TAB_MODES: { value: TerminalDefaultMode; label: string }[] = [
+  { value: "classic", label: "Classic" },
+  { value: "blocks", label: "Blocks" },
+];
 
 export function ForkSection() {
-  return <SectionHeader title="Fork" />;
+  const newTabMode = usePreferencesStore((s) => s.terminalDefaultMode);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <SectionHeader title="Fork" description="Fork-only behavior." />
+
+      <div className="flex flex-col gap-2">
+        <SettingRow
+          title="New tab mode"
+          description="Cmd+T opens this kind of tab and Cmd+Shift+T opens the other. Blocks tabs cannot be split into panes; when Blocks is the default, use Cmd+Shift+T to open a Classic tab for panes."
+        >
+          <Select
+            value={newTabMode}
+            onValueChange={(v) =>
+              void setTerminalDefaultMode(v as TerminalDefaultMode)
+            }
+          >
+            <SelectTrigger value={newTabMode} className="h-8 w-28 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {NEW_TAB_MODES.map((m) => (
+                <SelectItem
+                  key={m.value}
+                  value={m.value}
+                  className="text-[12px]"
+                >
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+      </div>
+    </div>
+  );
 }
