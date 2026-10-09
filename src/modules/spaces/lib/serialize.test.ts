@@ -143,6 +143,40 @@ describe("hydrateTabs", () => {
     ).toEqual([]);
   });
 
+  it("round-trips docView and loads old editor tabs without it", () => {
+    const tab = {
+      id: 1,
+      kind: "editor",
+      spaceId: "s1",
+      title: "a.html",
+      path: "/a/a.html",
+      dirty: false,
+      preview: false,
+      docView: "split",
+    } as Tab;
+    const ser = serializeTabs([tab]);
+    expect(ser).toEqual([
+      { kind: "editor", path: "/a/a.html", docView: "split" },
+    ]);
+    const back = hydrateTabs(ser, "s1", counter());
+    expect((back[0] as { docView?: string }).docView).toBe("split");
+    const old = hydrateTabs(
+      [{ kind: "editor", path: "/a/a.html" }],
+      "s1",
+      counter(),
+    );
+    expect((old[0] as { docView?: string }).docView).toBeUndefined();
+    const bad = hydrateTabs(
+      [{ kind: "editor", path: "/a/a.html", docView: "zzz" } as never],
+      "s1",
+      counter(),
+    );
+    expect((bad[0] as { docView?: string }).docView).toBeUndefined();
+    expect(serializeTabs([{ ...tab, docView: "code" } as Tab])).toEqual([
+      { kind: "editor", path: "/a/a.html" },
+    ]);
+  });
+
   it("hydrates editor/preview/markdown as cold with derived titles", () => {
     const serialized: SerializedTab[] = [
       { kind: "editor", path: "/a/foo.ts" },

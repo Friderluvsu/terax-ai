@@ -4,6 +4,7 @@ import {
   type SplitDir,
 } from "@/modules/terminal/lib/panes";
 import type {
+  DocView,
   EditorTab,
   MarkdownTab,
   PreviewTab,
@@ -22,9 +23,13 @@ export type SerializedTab =
       blocks?: boolean;
       customTitle?: string;
     }
-  | { kind: "editor"; path: string }
+  | { kind: "editor"; path: string; docView?: DocView }
   | { kind: "preview"; url: string }
   | { kind: "markdown"; path: string };
+
+function isDocView(v: unknown): v is DocView {
+  return v === "code" || v === "split" || v === "preview";
+}
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -78,7 +83,11 @@ function serializeTab(tab: Tab): SerializedTab | null {
         ...(tab.customTitle !== undefined && { customTitle: tab.customTitle }),
       };
     case "editor":
-      return { kind: "editor", path: tab.path };
+      return {
+        kind: "editor",
+        path: tab.path,
+        ...(tab.docView && tab.docView !== "code" && { docView: tab.docView }),
+      };
     case "preview":
       return { kind: "preview", url: tab.url };
     case "markdown":
@@ -175,6 +184,8 @@ function hydrateTab(
         path: s.path,
         dirty: false,
         preview: false,
+        ...(isDocView(s.docView) &&
+          s.docView !== "code" && { docView: s.docView }),
       } satisfies EditorTab;
     case "preview":
       return {

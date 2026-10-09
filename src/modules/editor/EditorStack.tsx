@@ -1,9 +1,10 @@
-import { cn, isMarkdownPath } from "@/lib/utils";
-import { MarkdownViewToggle } from "@/modules/markdown";
-import type { EditorTab, Tab } from "@/modules/tabs";
-import { useWorkspaceEnvStore } from "@/modules/workspace";
+import { cn, isHtmlPath, isMarkdownPath } from "@/lib/utils";
+import { DocumentViewToggle, MarkdownViewToggle } from "@/modules/markdown";
+import type { DocView, EditorTab, Tab } from "@/modules/tabs";
+import { envCaps, useWorkspaceEnvStore } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { EditorPane, type EditorPaneHandle } from "./EditorPane";
+import { HtmlSplitView } from "./HtmlSplitView";
 import { RunScriptButton } from "./RunScriptButton";
 
 type Props = {
@@ -14,6 +15,8 @@ type Props = {
   onCloseTab: (id: number) => void;
   onSetMarkdownView: (id: number, mode: "rendered" | "raw") => void;
   onRunScript: (path: string) => void;
+  onSetDocView: (id: number, view: DocView) => void;
+  rootHint: string | null;
 };
 
 export function EditorStack({
@@ -24,8 +27,11 @@ export function EditorStack({
   onCloseTab,
   onSetMarkdownView,
   onRunScript,
+  onSetDocView,
+  rootHint,
 }: Props) {
   const isLocal = useWorkspaceEnvStore((s) => s.env.kind === "local");
+  const htmlPreview = useWorkspaceEnvStore((s) => envCaps(s.env).htmlPreview);
   const editors = tabs.filter(
     (t): t is EditorTab => t.kind === "editor" && !t.cold,
   );
@@ -98,6 +104,16 @@ export function EditorStack({
     <div className="relative h-full w-full">
       {editors.map((t) => {
         const visible = t.id === activeId;
+        const htmlTab = htmlPreview && isHtmlPath(t.path);
+        const pane = (
+          <EditorPane
+            ref={getRefCallback(t.id)}
+            path={t.path}
+            overrideLanguage={t.overrideLanguage}
+            onDirtyChange={getDirtyCallback(t.id)}
+            onClose={getCloseCallback(t.id)}
+          />
+        );
         return (
           <div
             key={t.id}
@@ -123,13 +139,30 @@ export function EditorStack({
                   onRun={onRunScript}
                 />
               )}
-              <EditorPane
-                ref={getRefCallback(t.id)}
-                path={t.path}
-                overrideLanguage={t.overrideLanguage}
-                onDirtyChange={getDirtyCallback(t.id)}
-                onClose={getCloseCallback(t.id)}
-              />
+              {htmlTab && (
+                <DocumentViewToggle
+                  mode={t.docView ?? "code"}
+                  onChange={(view) => onSetDocView(t.id, view)}
+                  options={[
+                    { value: "code", label: "Code" },
+                    { value: "split", label: "Split" },
+                    { value: "preview", label: "Preview" },
+                  ]}
+                />
+              )}
+              {htmlTab ? (
+                <HtmlSplitView
+                  view={t.docView}
+                  visible={visible}
+                  path={t.path}
+                  rootHint={rootHint}
+                  dirty={t.dirty}
+                >
+                  {pane}
+                </HtmlSplitView>
+              ) : (
+                pane
+              )}
             </div>
           </div>
         );

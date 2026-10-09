@@ -16,6 +16,7 @@ export {
   type Tab,
   type TerminalTab,
   type EditorTab,
+  type DocView,
   type PreviewTab,
   type MarkdownTab,
   type AiDiffTab,

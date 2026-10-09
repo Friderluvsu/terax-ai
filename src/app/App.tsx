@@ -173,6 +173,7 @@ export default function App() {
     newPreviewTab,
     newMarkdownTab,
     setMarkdownView,
+    setDocView,
     setOverrideLanguage,
     openAiDiffTab,
     closeAiDiffTab,
@@ -1678,6 +1679,8 @@ export default function App() {
                         onGitHistorySearchHandle={setGitHistoryHandle}
                         onSetMarkdownView={setMarkdownView}
                         onRunScript={runScriptInNewTab}
+                        onSetDocView={setDocView}
+                        explorerRoot={explorerRoot}
                       />
                     </div>
 
