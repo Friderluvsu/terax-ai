@@ -1,5 +1,5 @@
-import { Key, KeyAction, Mods } from "@terax/ghostty-core";
 import type { KeyEvent } from "@terax/ghostty-core/protocol";
+import { Key, KeyAction, Mods } from "@terax/ghostty-core/protocol";
 
 export type PromptClickPoint = { readonly row: number; readonly col: number };
 
