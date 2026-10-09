@@ -15,7 +15,7 @@ use crate::modules::git::types::{
     GitOutput, TextSource, DEFAULT_TIMEOUT_SECS, MAX_FILE_BYTES, MAX_OUTPUT_BYTES,
     MAX_TIMEOUT_SECS, MIN_GIT_VERSION,
 };
-use crate::modules::workspace::WorkspaceEnv;
+use crate::modules::workspace::{WorkspaceEnv, SSH_UNSUPPORTED};
 #[cfg(windows)]
 use crate::modules::workspace::validate_wsl_distro_name;
 
@@ -47,6 +47,7 @@ fn workspace_cache_key(workspace: &WorkspaceEnv) -> String {
     match workspace {
         WorkspaceEnv::Local => "local".into(),
         WorkspaceEnv::Wsl { distro } => format!("wsl:{distro}"),
+        WorkspaceEnv::Ssh { host } => format!("ssh:{host}"),
     }
 }
 
@@ -305,22 +306,28 @@ where
 }
 
 fn build_git_command(
-    _workspace: &WorkspaceEnv,
+    workspace: &WorkspaceEnv,
     cwd: Option<&str>,
     args: &[OsString],
 ) -> Result<Command> {
-    #[cfg(windows)]
-    if let WorkspaceEnv::Wsl { distro } = _workspace {
-        validate_wsl_distro_name(distro)
-            .map_err(|_| GitError::command("unsafe WSL distro name", distro.clone()))?;
-        let mut cmd = Command::new("wsl.exe");
-        cmd.arg("-d").arg(distro);
-        if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
-            cmd.arg("--cd").arg(cwd);
+    match workspace {
+        WorkspaceEnv::Local => {}
+        #[cfg(windows)]
+        WorkspaceEnv::Wsl { distro } => {
+            validate_wsl_distro_name(distro)
+                .map_err(|_| GitError::command("unsafe WSL distro name", distro.clone()))?;
+            let mut cmd = Command::new("wsl.exe");
+            cmd.arg("-d").arg(distro);
+            if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
+                cmd.arg("--cd").arg(cwd);
+            }
+            cmd.arg("--exec").arg("git");
+            cmd.args(args);
+            return Ok(cmd);
         }
-        cmd.arg("--exec").arg("git");
-        cmd.args(args);
-        return Ok(cmd);
+        #[cfg(not(windows))]
+        WorkspaceEnv::Wsl { .. } => {}
+        WorkspaceEnv::Ssh { .. } => return Err(GitError::command("git", SSH_UNSUPPORTED)),
     }
 
     let mut cmd = Command::new("git");
@@ -408,18 +415,15 @@ fn drain<R: Read>(reader: &mut R, prealloc: usize) -> (Vec<u8>, bool) {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(windows)]
-    use super::build_git_command;
     use super::{
-        classify_auth_error, decode_text, parse_git_version, prune_expired_availability_entries,
-        version_meets_minimum, Availability, AvailabilityCache, AVAILABILITY_TTL,
+        build_git_command, classify_auth_error, decode_text, parse_git_version,
+        prune_expired_availability_entries, version_meets_minimum, Availability, AvailabilityCache,
+        AVAILABILITY_TTL,
     };
     use crate::modules::git::errors::GitError;
     use crate::modules::git::types::TextSource;
-    #[cfg(windows)]
-    use crate::modules::workspace::WorkspaceEnv;
+    use crate::modules::workspace::{WorkspaceEnv, SSH_UNSUPPORTED};
     use std::collections::HashMap;
-    #[cfg(windows)]
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
 
@@ -474,6 +478,28 @@ mod tests {
 
         assert!(cache.contains_key("local"));
         assert!(!cache.contains_key("wsl:Ubuntu"));
+    }
+
+    #[test]
+    fn refuses_git_command_for_ssh_workspace() {
+        let err = build_git_command(
+            &WorkspaceEnv::Ssh {
+                host: "example-host".into(),
+            },
+            Some("/tmp"),
+            &[OsString::from("status")],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains(SSH_UNSUPPORTED));
+    }
+
+    #[test]
+    fn availability_cache_key_separates_ssh_hosts() {
+        assert_eq!(
+            super::workspace_cache_key(&WorkspaceEnv::Ssh { host: "a".into() }),
+            "ssh:a"
+        );
+        assert_eq!(super::workspace_cache_key(&WorkspaceEnv::Local), "local");
     }
 
     #[cfg(windows)]

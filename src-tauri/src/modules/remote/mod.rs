@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod fail_closed_tests;
 pub mod ssh_config;
 pub mod target;
 

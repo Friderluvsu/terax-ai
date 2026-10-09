@@ -57,15 +57,16 @@ pub fn build_command(
     shell: Option<String>,
     control: Option<ShellControlEnv>,
 ) -> Result<CommandBuilder, String> {
-    let shell = sanitize_shell_override(shell);
-    #[cfg(unix)]
-    {
-        let _ = workspace;
-        unix::build(cwd, blocks, shell, control)
-    }
-    #[cfg(windows)]
-    {
-        windows::build(cwd, workspace, blocks, shell, control)
+    match workspace {
+        WorkspaceEnv::Ssh { .. } => Err(workspace::SSH_UNSUPPORTED.to_string()),
+        #[cfg(unix)]
+        WorkspaceEnv::Local | WorkspaceEnv::Wsl { .. } => {
+            unix::build(cwd, blocks, sanitize_shell_override(shell), control)
+        }
+        #[cfg(windows)]
+        ws @ (WorkspaceEnv::Local | WorkspaceEnv::Wsl { .. }) => {
+            windows::build(cwd, ws, blocks, sanitize_shell_override(shell), control)
+        }
     }
 }
 

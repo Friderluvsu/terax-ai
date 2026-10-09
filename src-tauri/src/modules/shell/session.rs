@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::run_blocking_inner;
 use crate::modules::fs::to_canon;
-use crate::modules::workspace::{resolve_path, WorkspaceEnv};
+use crate::modules::workspace::{local_path, WorkspaceEnv};
 
 pub struct ShellSession {
     pub cwd: Mutex<String>,
@@ -77,8 +77,7 @@ impl ShellSession {
         if self.pristine.load(Ordering::Acquire) {
             if let Some(hint) = cwd_hint.filter(|s| !s.is_empty()) {
                 let effective_workspace = workspace_hint.as_ref().unwrap_or(&self.workspace);
-                let p = resolve_path(&hint, effective_workspace);
-                if p.is_dir() {
+                if local_path(&hint, effective_workspace).is_ok_and(|p| p.is_dir()) {
                     *self.cwd.lock().unwrap() = hint;
                 }
             }
@@ -102,8 +101,7 @@ impl ShellSession {
 
         let (stdout_clean, cwd_after) = strip_cwd_sentinel(&raw.stdout, &cwd, &self.sentinel);
         if let Some(ref new_cwd) = cwd_after {
-            let p = resolve_path(new_cwd, &self.workspace);
-            if p.is_dir() {
+            if local_path(new_cwd, &self.workspace).is_ok_and(|p| p.is_dir()) {
                 *self.cwd.lock().unwrap() = new_cwd.clone();
             }
         }
@@ -127,19 +125,24 @@ fn wrap_posix_with_sentinel(command: &str, sentinel: &str) -> String {
 }
 
 fn wrap_with_sentinel(command: &str, workspace: &WorkspaceEnv, sentinel: &str) -> String {
-    if workspace.is_wsl() {
-        return wrap_posix_with_sentinel(command, sentinel);
+    match workspace {
+        WorkspaceEnv::Wsl { .. } | WorkspaceEnv::Ssh { .. } => {
+            wrap_posix_with_sentinel(command, sentinel)
+        }
+        WorkspaceEnv::Local => wrap_native_with_sentinel(command, sentinel),
     }
-    #[cfg(unix)]
-    {
-        wrap_posix_with_sentinel(command, sentinel)
-    }
-    #[cfg(windows)]
-    {
-        format!(
+}
+
+#[cfg(unix)]
+fn wrap_native_with_sentinel(command: &str, sentinel: &str) -> String {
+    wrap_posix_with_sentinel(command, sentinel)
+}
+
+#[cfg(windows)]
+fn wrap_native_with_sentinel(command: &str, sentinel: &str) -> String {
+    format!(
         "{command}\n$__terax_rc = if ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\n\"`n{sentinel}$($PWD.Path)\"\nexit $__terax_rc\n",
     )
-    }
 }
 
 fn strip_cwd_sentinel(stdout: &str, _fallback: &str, sentinel: &str) -> (String, Option<String>) {

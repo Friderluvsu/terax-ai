@@ -8,7 +8,7 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use tauri::{AppHandle, Emitter, State};
 
 use crate::modules::fs::to_canon;
-use crate::modules::workspace::{resolve_path, WorkspaceEnv, WorkspaceRegistry};
+use crate::modules::workspace::{local_path, WorkspaceEnv, WorkspaceRegistry};
 
 // Quiet-gap before a batch flushes; MAX_WINDOW caps latency under a long stream.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -208,20 +208,39 @@ fn remove_paths(inner: &mut WatchInner, paths: Vec<PathBuf>) {
 }
 
 // Canonical keys keep add/remove symmetric regardless of how the path was spelled.
-fn prepare_add(
+pub(crate) fn prepare_add(
     registry: &WorkspaceRegistry,
     workspace: &WorkspaceEnv,
     paths: Vec<String>,
-) -> Vec<PathBuf> {
-    paths
+) -> Result<Vec<PathBuf>, String> {
+    let resolved = paths
+        .iter()
+        .map(|raw| local_path(raw, workspace))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(resolved
         .into_iter()
-        .filter_map(|raw| {
-            let resolved = resolve_path(&raw, workspace);
+        .filter_map(|resolved| {
             let canonical = std::fs::canonicalize(&resolved).ok()?;
-            if !canonical.is_dir() || is_skipped(&canonical) || !registry.is_authorized(&canonical) {
+            if !canonical.is_dir() || is_skipped(&canonical) || !registry.is_authorized(&canonical)
+            {
                 return None;
             }
             Some(canonical)
+        })
+        .collect())
+}
+
+// A removed/renamed dir no longer canonicalizes; fall back so the refcount
+// entry is still released.
+pub(crate) fn prepare_remove(
+    workspace: &WorkspaceEnv,
+    paths: Vec<String>,
+) -> Result<Vec<PathBuf>, String> {
+    paths
+        .iter()
+        .map(|raw| {
+            let resolved = local_path(raw, workspace)?;
+            Ok(std::fs::canonicalize(&resolved).unwrap_or(resolved))
         })
         .collect()
 }
@@ -235,7 +254,7 @@ pub fn fs_watch_add(
     registry: State<'_, WorkspaceRegistry>,
 ) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let prepared = prepare_add(&registry, &workspace, paths);
+    let prepared = prepare_add(&registry, &workspace, paths)?;
     if prepared.is_empty() {
         return Ok(());
     }
@@ -254,15 +273,7 @@ pub fn fs_watch_remove(
     state: State<'_, FsWatchState>,
 ) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    // A removed/renamed dir no longer canonicalizes; fall back so the refcount
-    // entry is still released.
-    let prepared: Vec<PathBuf> = paths
-        .into_iter()
-        .map(|raw| {
-            let resolved = resolve_path(&raw, &workspace);
-            std::fs::canonicalize(&resolved).unwrap_or(resolved)
-        })
-        .collect();
+    let prepared = prepare_remove(&workspace, paths)?;
     let mut guard = state.inner.lock().expect("fs watch state poisoned");
     if let Some(inner) = guard.as_mut() {
         remove_paths(inner, prepared);

@@ -10,7 +10,7 @@ use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
 
 use super::to_canon;
-use crate::modules::workspace::{resolve_path, WorkspaceEnv};
+use crate::modules::workspace::{local_path, WorkspaceEnv};
 
 const FILE_SIZE_CAP: u64 = 5 * 1024 * 1024;
 const DEFAULT_MAX_RESULTS: usize = 200;
@@ -182,7 +182,7 @@ pub fn fs_grep(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root_path = resolve_path(&root, &workspace);
+    let root_path = local_path(&root, &workspace)?;
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
@@ -225,7 +225,7 @@ pub fn fs_grep_interactive(
     let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root_path = resolve_path(&root, &workspace);
+    let root_path = local_path(&root, &workspace)?;
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
@@ -274,7 +274,7 @@ pub fn fs_glob(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root_path = resolve_path(&root, &workspace);
+    let root_path = local_path(&root, &workspace)?;
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
@@ -328,16 +328,19 @@ fn display_path(
     root_display: &str,
     workspace: &WorkspaceEnv,
 ) -> String {
-    if workspace.is_wsl() {
-        if let Ok(rel) = path.strip_prefix(root_path) {
-            let rel = to_canon(rel);
-            return if rel.is_empty() {
-                root_display.to_string()
-            } else if root_display.ends_with('/') {
-                format!("{root_display}{rel}")
-            } else {
-                format!("{root_display}/{rel}")
-            };
+    match workspace {
+        WorkspaceEnv::Local => {}
+        WorkspaceEnv::Wsl { .. } | WorkspaceEnv::Ssh { .. } => {
+            if let Ok(rel) = path.strip_prefix(root_path) {
+                let rel = to_canon(rel);
+                return if rel.is_empty() {
+                    root_display.to_string()
+                } else if root_display.ends_with('/') {
+                    format!("{root_display}{rel}")
+                } else {
+                    format!("{root_display}/{rel}")
+                };
+            }
         }
     }
     to_canon(path)

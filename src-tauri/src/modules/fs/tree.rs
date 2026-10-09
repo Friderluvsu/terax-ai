@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use ignore::WalkBuilder;
 use serde::Serialize;
 
-use crate::modules::workspace::{resolve_path, WorkspaceEnv};
+use crate::modules::workspace::{local_path, WorkspaceEnv};
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -138,7 +138,7 @@ pub fn fs_read_dir(
     workspace: Option<WorkspaceEnv>,
 ) -> Result<Vec<DirEntry>, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root = resolve_path(&path, &workspace);
+    let root = local_path(&path, &workspace)?;
     let read = std::fs::read_dir(&root).map_err(|e| {
         log::debug!("fs_read_dir({}) failed: {e}", root.display());
         e.to_string()
@@ -224,7 +224,7 @@ pub fn list_subdirs(
     workspace: Option<WorkspaceEnv>,
 ) -> Result<Vec<String>, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let root = resolve_path(&path, &workspace);
+    let root = local_path(&path, &workspace)?;
     let read = std::fs::read_dir(&root).map_err(|e| {
         log::debug!("list_subdirs({}) read_dir failed: {e}", root.display());
         e.to_string()
