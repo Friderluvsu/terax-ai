@@ -63,7 +63,7 @@ const SECRET_BASENAME_PATTERNS: RegExp[] = [
  * char is a separator** — never raw substring. Listed without trailing slash;
  * the comparator handles separators.
  */
-const PROTECTED_DIRS = [
+export const PROTECTED_DIRS = [
   "/.ssh",
   "/.gnupg",
   "/.aws",
