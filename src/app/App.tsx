@@ -104,6 +104,7 @@ import {
   useThemeFileEditing,
   WindowVibrancyBridge,
 } from "@/modules/theme";
+import { FORK_UPDATER_DISABLED } from "@/lib/fork";
 import { UpdaterDialog } from "@/modules/updater";
 import {
   useWorkspaceEnvStore,
@@ -1599,7 +1600,7 @@ export default function App() {
             onCreated={(path) => openFileTab(path)}
           />
 
-          <UpdaterDialog />
+          {!FORK_UPDATER_DISABLED && <UpdaterDialog />}
 
           <CloseDialogs
             tabs={tabs}

@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { FORK_UPDATER_DISABLED } from "@/lib/fork";
 import { useUpdater } from "@/modules/updater";
 import { GithubIcon, Globe02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -121,13 +122,15 @@ export function AboutSection() {
 
       <div className="flex flex-col gap-1.5">
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            onClick={onUpdateClick}
-            disabled={checking || downloading || ready}
-          >
-            {checkLabel}
-          </Button>
+          {!FORK_UPDATER_DISABLED && (
+            <Button
+              size="sm"
+              onClick={onUpdateClick}
+              disabled={checking || downloading || ready}
+            >
+              {checkLabel}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
