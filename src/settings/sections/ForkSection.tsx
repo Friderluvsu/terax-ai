@@ -11,6 +11,8 @@ import {
   setTerminalClickToMoveCursor,
   setLaunchCommandFiles,
   setTerminalDefaultMode,
+  setTerminalOptionAsMeta,
+  type TerminalOptionAsMeta,
   type TerminalDefaultMode,
 } from "@/modules/settings/store";
 import { SectionHeader } from "../components/SectionHeader";
@@ -24,6 +26,7 @@ const NEW_TAB_MODES: { value: TerminalDefaultMode; label: string }[] = [
 export function ForkSection() {
   const newTabMode = usePreferencesStore((s) => s.terminalDefaultMode);
   const launchCommandFiles = usePreferencesStore((s) => s.launchCommandFiles);
+  const optionAsMeta = usePreferencesStore((s) => s.terminalOptionAsMeta);
   const clickToMoveCursor = usePreferencesStore(
     (s) => s.terminalClickToMoveCursor,
   );
@@ -86,6 +89,26 @@ export function ForkSection() {
             checked={clickToMoveCursor}
             onCheckedChange={(v) => void setTerminalClickToMoveCursor(v)}
           />
+        </SettingRow>
+        <SettingRow
+          title="Option as Meta"
+          description="Option+B, F and D act as Meta (Esc b, f, d) in the terminal. Left only keeps the right Option for typing characters such as guillemets and the em dash."
+        >
+          <Select
+            value={optionAsMeta}
+            onValueChange={(v) =>
+              void setTerminalOptionAsMeta(v as TerminalOptionAsMeta)
+            }
+          >
+            <SelectTrigger className="h-8 w-36 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="left">Left Option</SelectItem>
+              <SelectItem value="both">Both Options</SelectItem>
+            </SelectContent>
+          </Select>
         </SettingRow>
       </div>
     </div>

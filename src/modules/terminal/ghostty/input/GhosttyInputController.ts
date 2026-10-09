@@ -1,3 +1,4 @@
+import type { TerminalOptionAsMeta } from "@/modules/settings/store";
 import { terminalReadlineSequence } from "@/modules/terminal/lib/keymap";
 import { readTerminalClipboard } from "@/modules/terminal/lib/terminalClipboard";
 import {
@@ -144,7 +145,7 @@ export type GhosttyInputControllerOptions = {
   readonly onPaste?: (text: string) => boolean;
   readonly onText?: (text: string) => boolean;
   readonly onKeyDown?: (event: KeyboardEvent) => boolean;
-  readonly macOptionIsMeta?: boolean;
+  readonly optionAsMeta?: () => TerminalOptionAsMeta;
   readonly isMac?: boolean;
 };
 
@@ -154,6 +155,7 @@ export class GhosttyInputController {
   private readonly nativeSelection: TerminalNativeSelection | null;
   private readonly pressedKeys = new Map<string, KeyEvent>();
   private composing = false;
+  private altLeftDown = false;
   private mouseButtons = 0;
   private lastData = "";
   private lastSource: InputSource | null = null;
@@ -229,6 +231,16 @@ export class GhosttyInputController {
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     this.nativeSelection?.reset();
+    this.trackAlt(event, true);
+    if (
+      event.altKey &&
+      !event.isComposing &&
+      !this.composing &&
+      !event.defaultPrevented &&
+      (event.keyCode === 229 || event.key === "Process") &&
+      this.handleImeAltReadline(event)
+    )
+      return;
     if (
       event.defaultPrevented ||
       this.composing ||
@@ -277,15 +289,19 @@ export class GhosttyInputController {
       return;
     }
 
+    const metaBase = this.optionMetaBase(event);
+    if (metaBase) {
+      consume(event);
+      this.emitText(`\x1b${metaBase}`, "keydown", false);
+      return;
+    }
+
     const printable =
       event.key.length === 1 &&
       !event.metaKey &&
       ((!event.ctrlKey && !event.altKey) ||
         (event.ctrlKey && event.altKey) ||
-        (this.isMac &&
-          event.altKey &&
-          !event.ctrlKey &&
-          this.options.macOptionIsMeta !== true));
+        (this.isMac && event.altKey && !event.ctrlKey));
     if (printable) {
       consume(event);
       this.emitText(
@@ -309,6 +325,34 @@ export class GhosttyInputController {
     }
   };
 
+  private trackAlt(event: KeyboardEvent, down: boolean): void {
+    if (event.code === "AltLeft") this.altLeftDown = down;
+
+    if (!event.altKey) {
+      this.altLeftDown = false;
+    }
+  }
+
+  private handleImeAltReadline(event: KeyboardEvent): boolean {
+    const readline = terminalReadlineSequence(event, {
+      isMac: this.isMac,
+      isAlternateScreen: this.options.model.modes().alternateScreen,
+    });
+    if (!readline) return false;
+    consume(event);
+    this.emitText(readline, "keydown");
+    return true;
+  }
+
+  private optionMetaBase(event: KeyboardEvent): string | null {
+    if (!this.isMac || !event.altKey || event.ctrlKey || event.metaKey)
+      return null;
+    const mode = this.options.optionAsMeta?.() ?? "off";
+    if (mode === "off") return null;
+    if (mode === "left" && !this.altLeftDown) return null;
+    return baseCharacter(event);
+  }
+
   private encodeKeyDown(event: KeyboardEvent, key: Key): Uint8Array {
     const data = {
       action: event.repeat ? KeyAction.REPEAT : KeyAction.PRESS,
@@ -323,6 +367,7 @@ export class GhosttyInputController {
   }
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
+    this.trackAlt(event, false);
     const pressed = this.pressedKeys.get(event.code);
     if (!pressed) return;
     this.pressedKeys.delete(event.code);
@@ -615,6 +660,22 @@ const UNSHIFTED_SYMBOLS: Readonly<Record<string, string>> = {
   Semicolon: ";:",
   Slash: "/?",
 };
+
+function baseCharacter(event: KeyboardEvent): string | null {
+  let base: string | null = null;
+  if (event.code.startsWith("Key") && event.code.length === 4)
+    base = event.code.slice(3).toLowerCase();
+  else if (event.code.startsWith("Digit") && event.code.length === 6)
+    base = event.code.slice(5);
+  else {
+    const pair = UNSHIFTED_SYMBOLS[event.code];
+    if (pair) return event.shiftKey ? pair[1] : pair[0];
+  }
+  if (!base) return null;
+  if (!event.shiftKey) return base;
+  if (event.code.startsWith("Key")) return base.toUpperCase();
+  return ")!@#$%^&*("[Number(base)] ?? base;
+}
 
 function unshiftedCodepoint(event: KeyboardEvent): number {
   const character = event.key.toLowerCase().codePointAt(0) ?? 0;
