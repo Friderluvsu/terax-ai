@@ -9,6 +9,11 @@ import { initializeSessionGeneration as startSessionInitialization } from "@/mod
 import { replaceSessionSurface } from "@/modules/terminal/ghostty/replaceSessionSurface";
 import { openExternalUrl } from "@/lib/external-link";
 import { ensureMonoFontsLoaded, resolveFontFamily } from "@/lib/fonts";
+import {
+  ensureUserFonts,
+  getUserFontsVersion,
+  subscribeUserFonts,
+} from "@/lib/userFonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { TerminalBackendKind } from "@/modules/terminal/backend/contracts";
 import { PtyResizeScheduler } from "@/modules/terminal/lib/ptyResizeScheduler";
@@ -16,7 +21,14 @@ import { subscribeTerminalResizeInteraction } from "@/modules/terminal/lib/termi
 import { useTerminalFont } from "@/modules/terminal/lib/useTerminalFont";
 import type { TerminalSearchController } from "@/modules/terminal/search/TerminalSearchController";
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { openPty, type PtySession } from "../lib/pty-bridge";
 import { writeTerminalClipboard } from "../lib/terminalClipboard";
 import { LatestClipboardWrite } from "@/modules/terminal/lib/LatestClipboardWrite";
@@ -158,6 +170,13 @@ export function useGhosttyTerminalSession({
     (state) => state.terminalLetterSpacing,
   );
   const zoomLevel = usePreferencesStore((state) => state.zoomLevel);
+  const fontsVersion = useSyncExternalStore(
+    subscribeUserFonts,
+    getUserFontsVersion,
+  );
+  useEffect(() => {
+    void ensureUserFonts(fontFamily, fontWeight);
+  }, [fontFamily, fontWeight]);
   const font = useMemo<TerminalFontSpec>(
     () => ({
       family: resolveFontFamily(fontFamily),
@@ -165,8 +184,9 @@ export function useGhosttyTerminalSession({
       lineHeight: 1.2,
       letterSpacing,
       weight: fontWeight,
+      fontsVersion,
     }),
-    [fontFamily, fontSize, fontWeight, letterSpacing, zoomLevel],
+    [fontFamily, fontSize, fontWeight, letterSpacing, zoomLevel, fontsVersion],
   );
   const fontRef = useRef(font);
   fontRef.current = font;
@@ -651,6 +671,7 @@ async function initializeSessionGeneration(
   const coreRuntime = getGhosttyCoreRuntime();
   const metricsPromise = (async () => {
     await ensureMonoFontsLoaded();
+    await loadUserFonts(session);
     await document.fonts.ready;
     const initialFont = session.font;
     let metrics = await measureTerminalFont(initialFont);
@@ -1183,6 +1204,17 @@ function startupDiagnostics(startup: GhosttyStartupTimings) {
   };
 }
 
+async function loadUserFonts(session: GhosttySession): Promise<void> {
+  const { terminalFontFamily, terminalFontWeight } =
+    usePreferencesStore.getState();
+  await ensureUserFonts(terminalFontFamily, terminalFontWeight);
+  session.font = {
+    ...session.font,
+    family: resolveFontFamily(terminalFontFamily),
+    fontsVersion: getUserFontsVersion(),
+  };
+}
+
 async function updateSessionFont(
   session: GhosttySession,
   font: TerminalFontSpec,
@@ -1192,6 +1224,8 @@ async function updateSessionFont(
   if (!session.surface || session.disposed) return;
 
   await ensureMonoFontsLoaded();
+  await loadUserFonts(session);
+  font = session.font;
   await document.fonts.ready;
   const metrics = await measureTerminalFont(font);
   if (
@@ -1214,6 +1248,7 @@ function fontSpecKey(font: TerminalFontSpec): string {
     font.lineHeight,
     font.letterSpacing,
     font.weight,
+    font.fontsVersion ?? 0,
   ].join("|");
 }
 

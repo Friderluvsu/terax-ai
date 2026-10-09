@@ -7,6 +7,7 @@ export type TerminalFontSpec = {
   readonly lineHeight: number;
   readonly letterSpacing: number;
   readonly weight: string;
+  readonly fontsVersion?: number;
 };
 
 export type TerminalFontMetrics = {

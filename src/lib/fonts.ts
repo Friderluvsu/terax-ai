@@ -1,3 +1,5 @@
+import { getUserFontInfo } from "@/lib/userFonts";
+
 const NERD_FONT_CANDIDATES = [
   "JetBrainsMono Nerd Font",
   "JetBrainsMono Nerd Font Mono",
@@ -36,14 +38,24 @@ export function ensureMonoFontsLoaded(): Promise<void> {
 
 export function resolveFontFamily(userInput: string): string {
   const name = userInput.trim();
-  if (!name) return detectMonoFontFamily();
+  const info = getUserFontInfo(name);
+  const nerd = info.nerd ? `"${info.nerd}", ` : "";
+  if (!name) {
+    return info.nerd
+      ? `"${info.nerd}", ${FALLBACK_CHAIN}`
+      : detectMonoFontFamily();
+  }
   // A comma means the user gave a full stack; otherwise quote the single family.
   // Strip any quotes first so a stray quote can't produce a malformed token.
-  if (name.includes(",")) return `${name}, ${FALLBACK_CHAIN}`;
+  if (name.includes(",")) return `${name}, ${nerd}${FALLBACK_CHAIN}`;
   const family = name.replace(/['"]/g, "");
   const spaced = spacedNerdFontName(family);
-  const head = spaced ? `"${family}", "${spaced}"` : `"${family}"`;
-  return `${head}, ${FALLBACK_CHAIN}`;
+  const heads = [family, info.family ?? spaced]
+    .filter((f, i, all): f is string => !!f && all.indexOf(f) === i)
+    .map((f) => `"${f}"`);
+  if (info.nerd && !heads.includes(`"${info.nerd}"`))
+    heads.push(`"${info.nerd}"`);
+  return `${heads.join(", ")}, ${FALLBACK_CHAIN}`;
 }
 
 // Nerd Font files are named like "JetBrainsMonoNerdFont-Regular.ttf", so users
