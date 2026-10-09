@@ -147,6 +147,12 @@ pub fn sibling_name(name: &str, nonce: &str, ext: &str) -> String {
     format!(".{}.terax-{nonce}.{ext}", &name[..end])
 }
 
+pub fn nonce() -> Result<String, FsError> {
+    let mut bytes = [0u8; 8];
+    getrandom::fill(&mut bytes).map_err(|e| FsError::Failure(format!("random name: {e}")))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 pub fn mtime_millis(secs: Option<u32>) -> u64 {
     secs.map(|s| u64::from(s) * 1000).unwrap_or(0)
 }
@@ -173,6 +179,28 @@ pub trait RemoteFs: Send + Sync {
         path: &str,
         data: &[u8],
     ) -> impl Future<Output = Result<RemoteMetadata, FsError>> + Send;
+    /// Creates `path` exclusively, writes `data` and applies `mode` before
+    /// closing it; a partially written file is removed again.
+    fn write_new(
+        &self,
+        path: &str,
+        data: &[u8],
+        mode: Option<u32>,
+    ) -> impl Future<Output = Result<(), FsError>> + Send;
+    /// Truncates and rewrites an existing file; not atomic.
+    fn write_in_place(
+        &self,
+        path: &str,
+        data: &[u8],
+    ) -> impl Future<Output = Result<(), FsError>> + Send;
+    /// Does not follow a final symlink.
+    fn lstat(&self, path: &str) -> impl Future<Output = Result<RemoteMetadata, FsError>> + Send;
+    /// Atomic replacing rename; `Unsupported` unless the server offers it.
+    fn posix_rename(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> impl Future<Output = Result<(), FsError>> + Send;
     fn mkdir(&self, path: &str) -> impl Future<Output = Result<(), FsError>> + Send;
     /// Removes a file, a symlink or an empty directory.
     fn remove(&self, path: &str) -> impl Future<Output = Result<(), FsError>> + Send;

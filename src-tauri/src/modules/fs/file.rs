@@ -119,6 +119,8 @@ struct FileWrittenEvent {
     env: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
 }
 
 /// Atomic write via O_EXCL tempfile in the target's parent, then rename.
@@ -145,17 +147,40 @@ pub async fn fs_write_file(
     app: tauri::AppHandle,
 ) -> Result<u64, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
-    let mtime = write_file_sync(&path, &content, &workspace)?;
+    let (mtime, warning) = if let WorkspaceEnv::Ssh { host } = &workspace {
+        let saved = write_remote(&app, host, &path, &content).await?;
+        let warning = saved.in_place.then(|| {
+            format!("Saved {path} in place: its folder is not writable, so the save was not atomic")
+        });
+        (saved.mtime, warning)
+    } else {
+        (write_file_sync(&path, &content, &workspace)?, None)
+    };
     let _ = app.emit(
         "fs:file-written",
         FileWrittenEvent {
             path: path.clone(),
             env: workspace.scope_key(),
             source,
+            warning,
         },
     );
 
     Ok(mtime)
+}
+
+async fn write_remote(
+    app: &tauri::AppHandle,
+    host: &str,
+    path: &str,
+    content: &str,
+) -> Result<dispatch::Saved, String> {
+    use tauri::Manager;
+    let fs = dispatch::host_fs(app, host)?;
+    let registry = app.state::<crate::modules::remote::RemoteRegistry>();
+    let scope = dispatch::Scope::host(&registry, host);
+    let mv = |from, to| dispatch::mv_force(app, host, from, to);
+    dispatch::save(&fs, &scope, path, content.as_bytes(), mv).await
 }
 
 pub(crate) fn write_file_sync(

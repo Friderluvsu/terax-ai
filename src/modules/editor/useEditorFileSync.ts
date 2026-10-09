@@ -13,6 +13,7 @@ import {
 } from "@/modules/workspace";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { type RefObject, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import type { EditorPaneHandle } from "./EditorPane";
 
 type Params = {
@@ -47,11 +48,17 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
   }, [tabs, editorRefs]);
 
   useEffect(() => {
-    type FileWrittenPayload = { path: string; env?: string; source?: string };
+    type FileWrittenPayload = {
+      path: string;
+      env?: string;
+      source?: string;
+      warning?: string;
+    };
     const unlistenPromise =
       getCurrentWebviewWindow().listen<FileWrittenPayload>(
         "fs:file-written",
         (event) => {
+          if (event.payload.warning) toast.warning(event.payload.warning);
           if (event.payload.source === "editor") return;
           const normalizedPath = event.payload.path.replace(/\\/g, "/");
           const currentTabs = tabsRef.current;
