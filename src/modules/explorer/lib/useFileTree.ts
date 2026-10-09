@@ -7,8 +7,9 @@ import {
 } from "react";
 import { toast } from "sonner";
 import {
-  currentWorkspaceEnv,
+  fsEventInEnv,
   fsFor,
+  parseWorkspaceScopeKey,
   useWorkspaceEnvStore,
   workspaceScopeKey,
 } from "@/modules/workspace";
@@ -121,6 +122,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const expandedRef = useRef(expanded);
   const nodesRef = useRef(nodes);
   const watchedRef = useRef<Set<string>>(new Set());
+  const envRef = useRef(workspace);
   const optionsRef = useRef(options);
   const scopeKey = `${workspaceKey}\u0000${rootPath ?? ""}`;
   const scopeKeyRef = useRef(scopeKey);
@@ -132,6 +134,10 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     for (const cancel of [...conflictPromptsRef.current.values()]) cancel();
     conflictPromptsRef.current.clear();
   }, []);
+
+  useLayoutEffect(() => {
+    envRef.current = workspace;
+  }, [workspace]);
 
   useLayoutEffect(() => {
     optionsRef.current = options;
@@ -169,12 +175,12 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const addWatch = useCallback((path: string) => {
     if (watchedRef.current.has(path)) return;
     watchedRef.current.add(path);
-    watchAdd([path]);
+    watchAdd([path], envRef.current);
   }, []);
 
   const removeWatch = useCallback((path: string) => {
     if (!watchedRef.current.delete(path)) return;
-    watchRemove([path]);
+    watchRemove([path], envRef.current);
   }, []);
 
   const fetchChildren = useCallback(async (path: string) => {
@@ -182,7 +188,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       setNodes((s) => ({ ...s, [path]: { status: "loading" } }));
     }
     try {
-      const entries = await fsFor(currentWorkspaceEnv()).readDir(path, {
+      const entries = await fsFor(envRef.current).readDir(path, {
         showHidden: showHiddenRef.current,
         gitDecorations: gitDecorationsRef.current,
       });
@@ -230,7 +236,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         const toUnwatch: string[] = [];
         for (const d of dead)
           if (watchedRef.current.delete(d)) toUnwatch.push(d);
-        watchRemove(toUnwatch);
+        watchRemove(toUnwatch, envRef.current);
       }
     } catch (e) {
       setNodes((s) => ({
@@ -263,16 +269,17 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     // changes rapidly (e.g. switching folders in quick succession).
     nodesRef.current = {};
 
+    const env = parseWorkspaceScopeKey(workspaceKey);
     const toWatch = [rootPath, ...restored];
     void fetchChildren(rootPath);
     for (const d of restored) void fetchChildren(d);
     for (const p of toWatch) watchedRef.current.add(p);
-    watchAdd(toWatch);
+    watchAdd(toWatch, env);
 
     return () => {
       rememberExpansion(workspaceKey, rootPath, expandedRef.current);
       if (watchedRef.current.size > 0) {
-        watchRemove([...watchedRef.current]);
+        watchRemove([...watchedRef.current], env);
         watchedRef.current.clear();
       }
     };
@@ -281,7 +288,8 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   useEffect(() => {
     let alive = true;
     let unlisten: (() => void) | undefined;
-    void listenFsChanged((paths) => {
+    void listenFsChanged((paths, eventEnv) => {
+      if (!fsEventInEnv(eventEnv, envRef.current)) return;
       const current = nodesRef.current;
       const dirs = new Set<string>();
       for (const p of paths) {
@@ -392,7 +400,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       const path = joinPath(pendingCreate.parentPath, trimmed);
       const cmd = pendingCreate.kind === "dir" ? "createDir" : "createFile";
       try {
-        await fsFor(currentWorkspaceEnv())[cmd](path);
+        await fsFor(workspace)[cmd](path);
         await fetchChildren(pendingCreate.parentPath);
       } catch (e) {
         console.error(`${cmd} failed:`, e);
@@ -400,7 +408,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         setPendingCreate(null);
       }
     },
-    [pendingCreate, fetchChildren],
+    [pendingCreate, fetchChildren, workspace],
   );
 
   const beginRename = useCallback((path: string) => {

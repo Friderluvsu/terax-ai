@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { MarkdownTab, Tab } from "@/modules/tabs";
+import { envForSpace, useSpaces } from "@/modules/spaces";
 import { MarkdownPreviewPane } from "./MarkdownPreviewPane";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
 };
 
 export function MarkdownStack({ tabs, activeId, onSetMarkdownView }: Props) {
+  const spaces = useSpaces((s) => s.spaces);
   const markdowns = tabs.filter(
     (t): t is MarkdownTab => t.kind === "markdown" && !t.cold,
   );
@@ -28,6 +30,7 @@ export function MarkdownStack({ tabs, activeId, onSetMarkdownView }: Props) {
           >
             <MarkdownPreviewPane
               path={t.path}
+              env={envForSpace(t.spaceId, spaces)}
               visible={visible}
               onSetView={(mode) => onSetMarkdownView(t.id, mode)}
             />

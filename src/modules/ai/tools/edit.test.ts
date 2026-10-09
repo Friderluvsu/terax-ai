@@ -33,6 +33,8 @@ const FILE = "/workspace/a.txt";
 
 function makeContext(readCache: Map<string, { size: number; hash: number }>) {
   return {
+    env: { kind: "local" },
+    native: nativeMock,
     getCwd: () => "/workspace",
     getWorkspaceRoot: () => "/workspace",
     getTerminalContext: () => null,

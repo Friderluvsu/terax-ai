@@ -81,6 +81,14 @@ export function sameWorkspaceEnv(a: WorkspaceEnv, b: WorkspaceEnv): boolean {
   return workspaceScopeKey(a) === workspaceScopeKey(b);
 }
 
+/** Events without an env tag are treated as matching, for older emitters. */
+export function fsEventInEnv(
+  eventEnv: string | undefined,
+  env: WorkspaceEnv,
+): boolean {
+  return eventEnv === undefined || eventEnv === workspaceScopeKey(env);
+}
+
 export type EnvCaps = {
   watch: boolean;
   gitDecorations: boolean;

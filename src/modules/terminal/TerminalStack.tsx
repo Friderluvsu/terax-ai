@@ -1,3 +1,4 @@
+import { envForSpace, useSpaces } from "@/modules/spaces";
 import type { Tab } from "@/modules/tabs";
 import type { TerminalSearchController } from "@/modules/terminal/search/TerminalSearchController";
 import { useEffect, useMemo, useRef } from "react";
@@ -33,6 +34,7 @@ export function TerminalStack({
   onExit,
   onFocusLeaf,
 }: Props) {
+  const spaces = useSpaces((s) => s.spaces);
   const terminals = useMemo(() => selectLiveTerminals(tabs), [tabs]);
 
   const registerRef = useRef(registerHandle);
@@ -93,6 +95,7 @@ export function TerminalStack({
           >
             <PaneTreeView
               node={t.paneTree}
+              env={envForSpace(t.spaceId, spaces)}
               tabVisible={tabVisible}
               activeLeafId={t.activeLeafId}
               blocks={t.blocks ?? false}

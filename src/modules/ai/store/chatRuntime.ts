@@ -9,7 +9,9 @@ import { BUILTIN_AGENTS } from "../lib/agents";
 import { useAgentsStore } from "./agentsStore";
 import { usePlanStore } from "./planStore";
 import { createContextAwareTransport } from "../lib/transport";
-import type { ToolContext } from "../tools/tools";
+import type { BaseToolContext } from "../lib/runContext";
+import { activeSpaceEnv } from "@/modules/spaces/lib/activeSpace";
+import { useSpaces } from "@/modules/spaces/lib/useSpaces";
 import {
   chats,
   getActiveProviderKey,
@@ -20,7 +22,7 @@ import {
 
 function makeChat(sessionId: string): Chat<UIMessage> {
   const readCache = new Map<string, { size: number; hash: number }>();
-  const toolContext: ToolContext = {
+  const toolContext: BaseToolContext = {
     getCwd: () => useChatStore.getState().live.getCwd(),
     getWorkspaceRoot: () => useChatStore.getState().live.getWorkspaceRoot(),
     getTerminalContext: () => useChatStore.getState().live.getTerminalContext(),
@@ -40,6 +42,10 @@ function makeChat(sessionId: string): Chat<UIMessage> {
   const transport = createContextAwareTransport({
     getKeys: () => useChatStore.getState().apiKeys,
     toolContext,
+    getEnv: () => {
+      const { spaces, activeId } = useSpaces.getState();
+      return activeSpaceEnv(spaces, activeId);
+    },
     getModelId: () => useChatStore.getState().selectedModelId,
     getCustomInstructions: () =>
       usePreferencesStore.getState().customInstructions,

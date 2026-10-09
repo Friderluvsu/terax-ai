@@ -21,6 +21,8 @@ const toolOptions: ToolExecutionOptions = {
 
 function makeContext(): ToolContext {
   return {
+    env: { kind: "local" },
+    native: nativeMock as unknown as ToolContext["native"],
     getCwd: () => "/workspace",
     getWorkspaceRoot: () => "/workspace",
     getTerminalContext: () => null,

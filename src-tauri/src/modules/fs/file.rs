@@ -105,6 +105,7 @@ fn read_file_sync(p: &Path, force: bool) -> Result<ReadResult, String> {
 #[derive(Serialize, Clone)]
 struct FileWrittenEvent {
     path: String,
+    env: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
 }
@@ -138,6 +139,7 @@ pub async fn fs_write_file(
         "fs:file-written",
         FileWrittenEvent {
             path: path.clone(),
+            env: workspace.scope_key(),
             source,
         },
     );

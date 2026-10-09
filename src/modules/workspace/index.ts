@@ -16,6 +16,7 @@ export {
   assertNever,
   currentWorkspaceScopeKey,
   envCaps,
+  fsEventInEnv,
   sameWorkspaceEnv,
   type EnvCaps,
   currentWorkspaceEnv,

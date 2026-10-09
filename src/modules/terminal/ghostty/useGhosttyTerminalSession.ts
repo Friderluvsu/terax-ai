@@ -1,3 +1,4 @@
+import type { WorkspaceEnv } from "@/modules/workspace";
 import { loadSessionRenderer } from "@/modules/terminal/ghostty/loadSessionRenderer";
 import {
   ensureGhosttyBlocks,
@@ -78,6 +79,7 @@ type GhosttySession = {
   readonly leafId: number;
   readonly backend: GhosttyBackend;
   initialCwd: string | undefined;
+  env: WorkspaceEnv | undefined;
   lastCwd: string | null;
   model: GhosttyTerminalModelApi | null;
   promptTracker: PromptInputTracker;
@@ -126,6 +128,7 @@ type Options = {
   visible: boolean;
   focused: boolean;
   initialCwd?: string;
+  env?: WorkspaceEnv;
   blocks?: boolean;
   onExit?: (code: number) => void;
   onCwd?: (cwd: string) => void;
@@ -139,6 +142,7 @@ export function useGhosttyTerminalSession({
   visible,
   focused,
   initialCwd,
+  env,
   blocks = false,
   onSearchReady,
   onExit,
@@ -166,6 +170,8 @@ export function useGhosttyTerminalSession({
   const callbackRef = useRef({ onSearchReady, onExit, onCwd });
   callbackRef.current = { onSearchReady, onExit, onCwd };
   const initialCwdRef = useRef(initialCwd);
+  const envRef = useRef(env);
+  envRef.current = env;
 
   useEffect(() => {
     const session = ensureSession(
@@ -173,6 +179,7 @@ export function useGhosttyTerminalSession({
       backend,
       initialCwdRef.current,
       fontRef.current,
+      envRef.current,
     );
     if (blocks) ensureGhosttyBlocks(leafId);
     const node = container.current;
@@ -207,7 +214,13 @@ export function useGhosttyTerminalSession({
   }, [leafId, backend, font]);
 
   useEffect(() => {
-    const session = ensureSession(leafId, backend, initialCwdRef.current);
+    const session = ensureSession(
+      leafId,
+      backend,
+      initialCwdRef.current,
+      undefined,
+      envRef.current,
+    );
     session.visible = visible;
     session.focused = focused;
     ghosttyBlocks(leafId)?.setVisible(visible);
@@ -527,6 +540,7 @@ function ensureSession(
   backend: GhosttyBackend,
   initialCwd?: string,
   font?: TerminalFontSpec,
+  env?: WorkspaceEnv,
 ): GhosttySession {
   const existing = sessions.get(leafId);
   if (existing) {
@@ -550,6 +564,7 @@ function ensureSession(
     leafId,
     backend,
     initialCwd,
+    env,
     lastCwd: null,
     model: null,
     promptTracker: new PromptInputTracker(),
@@ -847,6 +862,7 @@ async function initializeSessionGeneration(
     !!ghosttyBlocks(session.leafId),
     preferences.terminalShell || undefined,
     session.leafId,
+    session.env,
   );
   if (session.disposed || generation !== session.generation) {
     await pty.close();

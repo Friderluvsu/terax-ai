@@ -3,18 +3,22 @@ import type { CustomEndpoint } from "../config";
 import { runAgentStream, type AgentUsageDelta } from "./agent";
 import type { ProviderKeys, CustomEndpointKeys } from "./keyring";
 import { formatAiError } from "./errors";
-import { currentWorkspaceScopeKey } from "@/modules/workspace";
-import { native } from "./native";
-import type { ToolContext } from "../tools/tools";
+import { type WorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
+import type { Native } from "./native";
+import { type BaseToolContext, bindRunContext } from "./runContext";
 
 const TERAX_MD_MAX_BYTES = 32 * 1024;
 type MemoryCacheEntry = { content: string | null; mtime: number };
 const projectMemoryCache = new Map<string, MemoryCacheEntry>();
 
-async function readTeraxMd(workspaceRoot: string | null): Promise<string | null> {
+async function readTeraxMd(
+  workspaceRoot: string | null,
+  native: Native,
+  env: WorkspaceEnv,
+): Promise<string | null> {
   if (!workspaceRoot) return null;
   const path = `${workspaceRoot.replace(/\/$/, "")}/TERAX.md`;
-  const cacheKey = `${currentWorkspaceScopeKey()}\0${workspaceRoot}`;
+  const cacheKey = `${workspaceScopeKey(env)}\0${workspaceRoot}`;
   const cached = projectMemoryCache.get(cacheKey);
   if (cached && Date.now() - cached.mtime < 30_000) return cached.content;
   try {
@@ -44,7 +48,8 @@ type LiveSnapshot = {
 
 type Deps = {
   getKeys: () => ProviderKeys;
-  toolContext: ToolContext;
+  toolContext: BaseToolContext;
+  getEnv: () => WorkspaceEnv;
   getModelId: () => string;
   getCustomInstructions: () => string;
   getAgentPersona: () => { name: string; instructions: string } | null;
@@ -77,7 +82,12 @@ type SendOptions = {
 export function createContextAwareTransport(deps: Deps) {
   const run = async (options: SendOptions) => {
     const live = deps.getLive();
-    const projectMemory = await readTeraxMd(live.workspaceRoot);
+    const toolContext = bindRunContext(deps.toolContext, deps.getEnv());
+    const projectMemory = await readTeraxMd(
+      live.workspaceRoot,
+      toolContext.native,
+      toolContext.env,
+    );
     const envBlock = formatEnvBlock(live);
     const messagesForRun = envBlock
       ? injectEnvIntoLastUser(options.messages, envBlock)
@@ -87,7 +97,7 @@ export function createContextAwareTransport(deps: Deps) {
       modelId: deps.getModelId(),
       customInstructions: deps.getCustomInstructions(),
       agentPersona: deps.getAgentPersona(),
-      toolContext: deps.toolContext,
+      toolContext,
       onStep: deps.onStep,
       onUsage: deps.onUsage,
       onCompact: deps.onCompact,

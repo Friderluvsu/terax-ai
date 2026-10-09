@@ -3,9 +3,14 @@ import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
 import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
 import { isLeaf, type PaneNode } from "@/modules/terminal/lib/panes";
-import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
+import {
+  parseWorkspaceScopeKey,
+  type WorkspaceEnv,
+  workspaceScopeKey,
+} from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { activeSpaceEnv, freshTabCwd } from "./activeSpace";
+import { envForSpace } from "./envForSpace";
 import { freshTerminalTab, hydrateTabs } from "./serialize";
 import { loadAll, type SpaceMeta, saveActiveId, saveSpacesList } from "./store";
 import { useSpaces } from "./useSpaces";
@@ -21,17 +26,26 @@ type Params = {
   adoptWorkspaceEnv: (env: WorkspaceEnv) => Promise<string | null>;
 };
 
-function uniqueCwds(tabs: Tab[]): string[] {
-  const set = new Set<string>();
-  const walk = (n: PaneNode) => {
-    if (isLeaf(n)) {
-      if (n.cwd) set.add(n.cwd);
-      return;
-    }
-    for (const c of n.children) walk(c);
-  };
-  for (const t of tabs) if (t.kind === "terminal") walk(t.paneTree);
-  return [...set];
+export function uniqueCwds(
+  tabs: Tab[],
+  envOf: (spaceId: string) => WorkspaceEnv,
+): { cwd: string; env: WorkspaceEnv }[] {
+  const seen = new Map<string, { cwd: string; env: WorkspaceEnv }>();
+  for (const t of tabs) {
+    if (t.kind !== "terminal") continue;
+    const env = envOf(t.spaceId);
+    const walk = (n: PaneNode) => {
+      if (isLeaf(n)) {
+        if (n.cwd) {
+          seen.set(`${workspaceScopeKey(env)}\0${n.cwd}`, { cwd: n.cwd, env });
+        }
+        return;
+      }
+      for (const c of n.children) walk(c);
+    };
+    walk(t.paneTree);
+  }
+  return [...seen.values()];
 }
 
 export function useSpacesBoot({
@@ -103,7 +117,9 @@ export function useSpacesBoot({
         }
 
         await Promise.allSettled(
-          uniqueCwds(restored).map((cwd) => native.workspaceAuthorize(cwd)),
+          uniqueCwds(restored, (id) => envForSpace(id, spaces)).map(
+            ({ cwd, env: cwdEnv }) => native.workspaceAuthorize(cwd, cwdEnv),
+          ),
         );
 
         const initialActiveIndex: Record<string, number> = {};
