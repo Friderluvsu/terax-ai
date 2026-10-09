@@ -45,6 +45,7 @@ export type CommandPaletteActionContext = {
   openNewPrivate: () => void;
   sshHosts: SshHost[];
   openSsh: (alias: string) => void;
+  openSshSpace: (alias: string) => void;
   openNewEditor: () => void;
   openNewPreview: () => void;
   openGitGraph: () => void;
@@ -181,6 +182,17 @@ export function createCommandItems(
       icon: TerminalIcon,
       trailing: sshHostDetail(host),
       run: () => ctx.openSsh(host.alias),
+    })),
+    ...ctx.sshHosts.map((host) => ({
+      id: `ssh.space.${host.alias}`,
+      title: `SSH: ${host.alias} (remote shell)`,
+      group: "Tabs" as const,
+      keywords: ["ssh", "remote", "space", "shell", host.hostname ?? ""].filter(
+        Boolean,
+      ),
+      icon: TerminalIcon,
+      trailing: sshHostDetail(host),
+      run: () => ctx.openSshSpace(host.alias),
     })),
     {
       id: "tab.newEditor",

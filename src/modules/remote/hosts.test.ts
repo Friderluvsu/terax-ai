@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { buildSshCommand, isValidSshAlias, sshHostDetail } from "./hosts";
+import {
+  buildSshCommand,
+  isValidSshAlias,
+  sshHostDetail,
+  sshSpaceInput,
+} from "./hosts";
+
+describe("sshSpaceInput", () => {
+  it("builds an ssh env for a valid alias", () => {
+    expect(sshSpaceInput("box")).toEqual({
+      name: "box",
+      env: { kind: "ssh", host: "box" },
+    });
+  });
+
+  it("rejects an invalid alias", () => {
+    expect(sshSpaceInput("-oProxyCommand=x")).toBeNull();
+    expect(sshSpaceInput("a b")).toBeNull();
+  });
+});
 
 describe("ssh alias", () => {
   it("accepts ordinary aliases", () => {

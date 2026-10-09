@@ -33,6 +33,7 @@ function baseContext(
     openNewPrivate: noop,
     sshHosts: [],
     openSsh: noop,
+    openSshSpace: noop,
     openNewEditor: noop,
     openNewPreview: noop,
     openGitGraph: noop,

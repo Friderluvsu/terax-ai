@@ -52,7 +52,7 @@ import {
 } from "@/modules/header";
 import { setLspNavigator } from "@/modules/lsp";
 import type { PreviewPaneHandle } from "@/modules/preview";
-import { buildSshCommand, useSshHosts } from "@/modules/remote";
+import { buildSshCommand, sshSpaceInput, useSshHosts } from "@/modules/remote";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setShowHidden } from "@/modules/settings/store";
@@ -1347,6 +1347,19 @@ export default function App() {
     return meta.id;
   }, [activeCwd, home, workspaceEnv, newTab, setActiveSpaceForNewTabs]);
 
+  const openSshSpace = useCallback(
+    (alias: string) => {
+      const input = sshSpaceInput(alias);
+      if (!input) return;
+      const { create, setActive } = useSpaces.getState();
+      const meta = create({ ...input, root: null });
+      setActiveSpaceForNewTabs(meta.id);
+      newTab();
+      setActive(meta.id);
+    },
+    [newTab, setActiveSpaceForNewTabs],
+  );
+
   const handleDeleteSpace = useCallback(
     (id: string) => {
       const nextSpaceId = useSpaces.getState().remove(id);
@@ -1429,6 +1442,7 @@ export default function App() {
             openNewPrivate: openNewPrivateTab,
             sshHosts,
             openSsh: openSshTab,
+            openSshSpace,
             openNewEditor: () => setNewEditorOpen(true),
             openNewPreview: () => openPreviewTab(""),
             openGitGraph: openGitGraphFromContext,
@@ -1463,6 +1477,7 @@ export default function App() {
       openNewPrivateTab,
       sshHosts,
       openSshTab,
+      openSshSpace,
       openPreviewTab,
       openGitGraphFromContext,
       toggleSourceControl,
