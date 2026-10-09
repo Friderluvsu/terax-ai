@@ -437,6 +437,55 @@ describe("GhosttyInputController", () => {
     );
     controller.dispose();
   });
+
+  it.each([
+    [true, true, 3],
+    [true, false, 0],
+    [false, true, 0],
+  ])(
+    "maps wheel to arrows (alt-screen %s, mode 1007 %s)",
+    (alt, altScroll, expected) => {
+      const pointerTarget = new FakeElement();
+      const onData = vi.fn();
+      const scrollBy = vi.fn(() => false);
+      const base = inputModel((mode) => mode === 1007 && altScroll);
+      const controller = new GhosttyInputController({
+        model: {
+          ...base,
+          modes: () => ({
+            ...base.modes(),
+            alternateScreen: alt,
+            mouseTracking: false,
+          }),
+          scrollBy,
+          encodeKey: () => new Uint8Array([0x1b, 0x5b, 0x41]),
+        },
+        input: new FakeTextArea() as unknown as HTMLTextAreaElement,
+        pointerTarget: pointerTarget as unknown as HTMLElement,
+        cellSize: () => ({ width: 10, height: 20 }),
+        onData,
+        onCopy: () => false,
+        isMac: false,
+      });
+
+      pointerTarget.dispatchEvent(
+        Object.assign(new Event("wheel", { cancelable: true }), {
+          deltaY: -60,
+          deltaMode: 0,
+          shiftKey: false,
+        }),
+      );
+
+      if (expected === 0) {
+        expect(onData).not.toHaveBeenCalled();
+      } else {
+        expect(onData).toHaveBeenCalledOnce();
+        expect(onData.mock.calls[0][0]).toHaveLength(3 * expected);
+      }
+      expect(scrollBy).not.toHaveBeenCalled();
+      controller.dispose();
+    },
+  );
 });
 
 function inputModel(
