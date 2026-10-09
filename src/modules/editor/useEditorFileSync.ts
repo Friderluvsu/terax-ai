@@ -4,7 +4,13 @@ import {
   watchAdd,
   watchRemove,
 } from "@/modules/explorer/lib/watch";
+import { envForSpace } from "@/modules/spaces";
 import type { Tab } from "@/modules/tabs";
+import {
+  fsEventInEnv,
+  parseWorkspaceScopeKey,
+  workspaceScopeKey,
+} from "@/modules/workspace";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { type RefObject, useEffect, useRef } from "react";
 import type { EditorPaneHandle } from "./EditorPane";
@@ -41,7 +47,7 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
   }, [tabs, editorRefs]);
 
   useEffect(() => {
-    type FileWrittenPayload = { path: string; source?: string };
+    type FileWrittenPayload = { path: string; env?: string; source?: string };
     const unlistenPromise =
       getCurrentWebviewWindow().listen<FileWrittenPayload>(
         "fs:file-written",
@@ -51,6 +57,8 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
           const currentTabs = tabsRef.current;
           for (const t of currentTabs) {
             if (t.kind !== "editor") continue;
+            if (!fsEventInEnv(event.payload.env, envForSpace(t.spaceId)))
+              continue;
             if (t.path.replace(/\\/g, "/") === normalizedPath) {
               editorRefs.current.get(t.id)?.reload();
             }
@@ -65,22 +73,47 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
   const editorWatchRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const want = new Set<string>();
-    for (const t of tabs) if (t.kind === "editor") want.add(parentDir(t.path));
+    for (const t of tabs) {
+      if (t.kind !== "editor") continue;
+      const scope = workspaceScopeKey(envForSpace(t.spaceId));
+      want.add(`${scope}\0${parentDir(t.path)}`);
+    }
     const prev = editorWatchRef.current;
-    const toAdd = [...want].filter((d) => !prev.has(d));
-    const toRemove = [...prev].filter((d) => !want.has(d));
-    watchAdd(toAdd);
-    watchRemove(toRemove);
+    const apply = (
+      keys: string[],
+      fn: (
+        paths: string[],
+        env: ReturnType<typeof parseWorkspaceScopeKey>,
+      ) => void,
+    ) => {
+      const byScope = new Map<string, string[]>();
+      for (const k of keys) {
+        const i = k.indexOf("\0");
+        const scope = k.slice(0, i);
+        byScope.set(scope, [...(byScope.get(scope) ?? []), k.slice(i + 1)]);
+      }
+      for (const [scope, dirs] of byScope)
+        fn(dirs, parseWorkspaceScopeKey(scope));
+    };
+    apply(
+      [...want].filter((d) => !prev.has(d)),
+      watchAdd,
+    );
+    apply(
+      [...prev].filter((d) => !want.has(d)),
+      watchRemove,
+    );
     editorWatchRef.current = want;
   }, [tabs]);
 
   useEffect(() => {
     let alive = true;
     let unlisten: (() => void) | undefined;
-    void listenFsChanged((paths) => {
+    void listenFsChanged((paths, eventEnv) => {
       const changed = new Set(paths.map((p) => p.replace(/\\/g, "/")));
       for (const t of tabsRef.current) {
         if (t.kind !== "editor") continue;
+        if (!fsEventInEnv(eventEnv, envForSpace(t.spaceId))) continue;
         if (changed.has(t.path.replace(/\\/g, "/"))) {
           editorRefs.current.get(t.id)?.reload();
         }

@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { native } from "../lib/native";
 import { checkReadable, checkReadableCanonical } from "../lib/security";
 import { resolvePath, type ToolContext } from "./context";
 
@@ -43,6 +42,7 @@ function isReadableSearchHit(path: string, root: string): boolean {
 }
 
 export function buildSearchTools(ctx: ToolContext) {
+  const { native } = ctx;
   return {
     grep: tool({
       description:

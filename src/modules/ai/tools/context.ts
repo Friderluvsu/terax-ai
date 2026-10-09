@@ -1,4 +1,11 @@
+import type { Native } from "../lib/native";
+import type { WorkspaceEnv } from "@/modules/workspace";
+
 export type ToolContext = {
+  /** Environment bound when the run started; never re-read from the global store. */
+  env: WorkspaceEnv;
+  /** IPC wrapper bound to `env`. */
+  native: Native;
   /** Active terminal tab cwd, used to resolve relative paths. Null = home. */
   getCwd: () => string | null;
   /** Workspace root (explorer root). Used by tools that operate over the project. */

@@ -57,6 +57,7 @@ import { detectIndentUnit } from "./lib/indent";
 import { type LanguageResult, resolveLanguage } from "./lib/languageResolver";
 import { FORCE_READ_LIMIT, useDocument } from "./lib/useDocument";
 import { useEditorThemeExt } from "./lib/useEditorThemeExt";
+import type { WorkspaceEnv } from "@/modules/workspace";
 import { initVimGlobals, vimHandlersExtension } from "./lib/vim";
 
 initVimGlobals();
@@ -88,6 +89,7 @@ export type EditorPaneHandle = {
 
 type Props = {
   path: string;
+  env: WorkspaceEnv;
   overrideLanguage?: string | null;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
@@ -108,11 +110,13 @@ function formatBytes(n: number): string {
 // skip re-rendering entirely when App re-renders (terminal events, tab churn).
 export const EditorPane = memo(
   forwardRef<EditorPaneHandle, Props>(function EditorPane(props, ref) {
-    const { path, overrideLanguage, onDirtyChange, onSaved, onClose } = props;
+    const { path, env, overrideLanguage, onDirtyChange, onSaved, onClose } =
+      props;
 
     const { doc, onChange, save, reload, adoptDiskText, openAnyway } =
       useDocument({
         path,
+        env,
         onDirtyChange,
       });
     const reloadRef = useRef(reload);
@@ -185,6 +189,9 @@ export const EditorPane = memo(
     const warnedNoLspRef = useRef(false);
     const warnedNoFormatRef = useRef(false);
 
+    const envRef = useRef(env);
+    envRef.current = env;
+
     const performSave = useCallback(async () => {
       const view = cmRef.current?.view;
       const prefs = usePreferencesStore.getState();
@@ -223,12 +230,13 @@ export const EditorPane = memo(
         const error = await runExternalFormatter(
           formatter,
           pathRef.current,
+          envRef.current,
           prefs.editorCustomFormatCommand,
         );
         if (error) {
           toast.error(`${formatter} format failed`, { description: error });
         } else {
-          const readBack = await readFileText(pathRef.current);
+          const readBack = await readFileText(pathRef.current, envRef.current);
           if (readBack !== null && view && view.state.doc === docAtSave) {
             applyFormattedContent(
               view,
@@ -627,7 +635,8 @@ export const EditorPane = memo(
         );
       }
 
-      const canForce = doc.status === "toolarge" && doc.size <= FORCE_READ_LIMIT;
+      const canForce =
+        doc.status === "toolarge" && doc.size <= FORCE_READ_LIMIT;
       return (
         <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
           <div className="text-sm text-foreground">

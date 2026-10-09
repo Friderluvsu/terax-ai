@@ -2,7 +2,7 @@ import {
   clearAgentActivity,
   ensureAgentActivityListener,
 } from "@/modules/terminal/lib/agentActivity";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import { currentWorkspaceEnv, type WorkspaceEnv } from "@/modules/workspace";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import {
@@ -41,6 +41,7 @@ export async function openPty(
   blocks?: boolean,
   shell?: string,
   paneId?: number,
+  env?: WorkspaceEnv,
 ): Promise<PtySession> {
   // Raw bytes preserve split UTF-8 and escape sequences across IPC.
   const onData = new Channel<ArrayBuffer>();
@@ -104,7 +105,7 @@ export async function openPty(
       cols,
       rows,
       cwd: cwd ?? null,
-      workspace: currentWorkspaceEnv(),
+      workspace: env ?? currentWorkspaceEnv(),
       blocks: blocks ?? false,
       shell: shell ?? null,
       paneId: paneId ?? null,

@@ -33,6 +33,8 @@ const toolOptions: ToolExecutionOptions = {
 
 function makeContext(sessionId: string | null = "session"): ToolContext {
   return {
+    env: { kind: "local" },
+    native: nativeMock,
     getCwd: () => "/workspace",
     getWorkspaceRoot: () => "/workspace",
     getTerminalContext: () => null,
@@ -51,11 +53,7 @@ type Result = Record<string, any>;
 
 async function run(
   toolName:
-    | "bash_run"
-    | "bash_background"
-    | "bash_logs"
-    | "bash_list"
-    | "bash_kill",
+    "bash_run" | "bash_background" | "bash_logs" | "bash_list" | "bash_kill",
   ctx: ToolContext,
   input: Record<string, unknown>,
 ): Promise<Result> {

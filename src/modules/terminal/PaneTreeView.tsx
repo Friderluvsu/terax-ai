@@ -4,6 +4,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import type { TerminalSearchController } from "@/modules/terminal/search/TerminalSearchController";
+import type { WorkspaceEnv } from "@/modules/workspace";
 import { Fragment, useCallback, useEffect, useRef } from "react";
 import { useTerminalDropStore } from "./lib/dropStore";
 import { firstLeafSlotId, type PaneNode } from "./lib/panes";
@@ -22,6 +23,7 @@ type LeafBundle = {
 
 type Props = {
   node: PaneNode;
+  env: WorkspaceEnv;
   tabVisible: boolean;
   activeLeafId: number;
   blocks: boolean;
@@ -32,7 +34,8 @@ type Props = {
 export function PaneTreeView(props: Props) {
   const { node } = props;
   if (node.kind === "leaf") {
-    const { tabVisible, activeLeafId, blocks, onFocusLeaf, getBundle } = props;
+    const { env, tabVisible, activeLeafId, blocks, onFocusLeaf, getBundle } =
+      props;
     const focused = node.id === activeLeafId;
     const b = getBundle(node.id);
     return (
@@ -50,6 +53,7 @@ export function PaneTreeView(props: Props) {
       >
         <TerminalPane
           leafId={node.id}
+          env={env}
           visible={tabVisible}
           focused={focused}
           initialCwd={node.cwd}

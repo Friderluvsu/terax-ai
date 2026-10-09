@@ -1,9 +1,9 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { native } from "../lib/native";
 import { checkShellCommand } from "../lib/security";
 import type { ToolContext } from "./context";
-import { currentWorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
+import { workspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
+import type { Native } from "../lib/native";
 
 /**
  * Per-session lazy shell-session id. The agent gets one persistent shell per
@@ -12,6 +12,7 @@ import { currentWorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
 const sessionShells = new Map<string, Promise<number>>();
 
 async function getSessionShell(
+  native: Native,
   sessionId: string,
   cwd: string | null,
 ): Promise<number> {
@@ -23,11 +24,12 @@ async function getSessionShell(
   return p;
 }
 
-function workspaceSessionKey(sessionId: string): string {
-  return `${sessionId}:${workspaceScopeKey(currentWorkspaceEnv())}`;
+function workspaceSessionKey(sessionId: string, env: WorkspaceEnv): string {
+  return `${sessionId}:${workspaceScopeKey(env)}`;
 }
 
 export function buildShellTools(ctx: ToolContext) {
+  const { native } = ctx;
   return {
     bash_run: tool({
       description:
@@ -44,7 +46,11 @@ export function buildShellTools(ctx: ToolContext) {
         if (!sid) return { error: "no active chat session" };
         try {
           const cwd = ctx.getCwd();
-          const shellId = await getSessionShell(workspaceSessionKey(sid), cwd);
+          const shellId = await getSessionShell(
+            native,
+            workspaceSessionKey(sid, ctx.env),
+            cwd,
+          );
           const r = await native.shellSessionRun(
             shellId,
             command,

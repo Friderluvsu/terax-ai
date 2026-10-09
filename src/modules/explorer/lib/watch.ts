@@ -1,30 +1,40 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
+import {
+  currentWorkspaceEnv,
+  fsFor,
+  type WorkspaceEnv,
+} from "@/modules/workspace";
 
 const FS_CHANGED_EVENT = "fs:changed";
 
-type FsChangedPayload = { paths: string[] };
+type FsChangedPayload = { paths: string[]; env?: string };
 
-export function watchAdd(paths: string[]): void {
+export function watchAdd(
+  paths: string[],
+  env: WorkspaceEnv = currentWorkspaceEnv(),
+): void {
   if (paths.length === 0) return;
-  void fsFor(currentWorkspaceEnv())
+  void fsFor(env)
     .watchAdd(paths)
     .catch(() => {});
 }
 
-export function watchRemove(paths: string[]): void {
+export function watchRemove(
+  paths: string[],
+  env: WorkspaceEnv = currentWorkspaceEnv(),
+): void {
   if (paths.length === 0) return;
-  void fsFor(currentWorkspaceEnv())
+  void fsFor(env)
     .watchRemove(paths)
     .catch(() => {});
 }
 
 export function listenFsChanged(
-  handler: (paths: string[]) => void,
+  handler: (paths: string[], env: string | undefined) => void,
 ): Promise<() => void> {
   return getCurrentWebviewWindow().listen<FsChangedPayload>(
     FS_CHANGED_EVENT,
-    (e) => handler(e.payload.paths),
+    (e) => handler(e.payload.paths, e.payload.env),
   );
 }
 

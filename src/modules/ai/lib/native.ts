@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
+import {
+  currentWorkspaceEnv,
+  fsFor,
+  type WorkspaceEnv,
+} from "@/modules/workspace";
 
 export type ReadResult =
   | { kind: "text"; content: string; size: number }
@@ -136,231 +140,236 @@ export type GitBranchListResult = {
   branches: GitBranchEntry[];
 };
 
-export const native = {
-  workspaceCurrentDir: () => invoke<string>("workspace_current_dir"),
-  workspaceAuthorize: (path: string) =>
-    invoke<string>("workspace_authorize", {
-      path,
-      workspace: currentWorkspaceEnv(),
-    }),
-  readFile: (path: string) => fsFor(currentWorkspaceEnv()).readFile(path),
-  writeFile: (path: string, content: string) =>
-    fsFor(currentWorkspaceEnv())
-      .writeFile(path, content)
-      .then(() => undefined),
-  canonicalize: (path: string) =>
-    fsFor(currentWorkspaceEnv()).canonicalize(path),
-  createFile: (path: string) => fsFor(currentWorkspaceEnv()).createFile(path),
-  createDir: (path: string) => fsFor(currentWorkspaceEnv()).createDir(path),
-  // AI tooling never sees dot-prefixed entries regardless of the user's
-  // explorer preference — keeps .git / .env / .ssh out of agent context.
-  readDir: (path: string) =>
-    fsFor(currentWorkspaceEnv()).readDir(path, { showHidden: false }),
-  grep: (params: {
-    pattern: string;
-    root: string;
-    glob?: string[];
-    caseInsensitive?: boolean;
-    maxResults?: number;
-  }) =>
-    fsFor(currentWorkspaceEnv()).grep({
-      pattern: params.pattern,
-      root: params.root,
-      glob: params.glob ?? null,
-      caseInsensitive: params.caseInsensitive ?? null,
-      maxResults: params.maxResults ?? null,
-    }),
-  glob: (params: { pattern: string; root: string; maxResults?: number }) =>
-    fsFor(currentWorkspaceEnv()).glob({
-      pattern: params.pattern,
-      root: params.root,
-      maxResults: params.maxResults ?? null,
-    }),
-  runCommand: (command: string, cwd?: string | null, timeoutSecs?: number) =>
-    invoke<CommandOutput>("shell_run_command", {
-      command,
-      cwd: cwd ?? null,
-      timeoutSecs: timeoutSecs ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
+export function createNative(getEnv: () => WorkspaceEnv) {
+  return {
+    workspaceCurrentDir: () => invoke<string>("workspace_current_dir"),
+    workspaceAuthorize: (path: string, env?: WorkspaceEnv) =>
+      invoke<string>("workspace_authorize", {
+        path,
+        workspace: env ?? getEnv(),
+      }),
+    readFile: (path: string) => fsFor(getEnv()).readFile(path),
+    writeFile: (path: string, content: string) =>
+      fsFor(getEnv())
+        .writeFile(path, content)
+        .then(() => undefined),
+    canonicalize: (path: string) => fsFor(getEnv()).canonicalize(path),
+    createFile: (path: string) => fsFor(getEnv()).createFile(path),
+    createDir: (path: string) => fsFor(getEnv()).createDir(path),
+    // AI tooling never sees dot-prefixed entries regardless of the user's
+    // explorer preference — keeps .git / .env / .ssh out of agent context.
+    readDir: (path: string) =>
+      fsFor(getEnv()).readDir(path, { showHidden: false }),
+    grep: (params: {
+      pattern: string;
+      root: string;
+      glob?: string[];
+      caseInsensitive?: boolean;
+      maxResults?: number;
+    }) =>
+      fsFor(getEnv()).grep({
+        pattern: params.pattern,
+        root: params.root,
+        glob: params.glob ?? null,
+        caseInsensitive: params.caseInsensitive ?? null,
+        maxResults: params.maxResults ?? null,
+      }),
+    glob: (params: { pattern: string; root: string; maxResults?: number }) =>
+      fsFor(getEnv()).glob({
+        pattern: params.pattern,
+        root: params.root,
+        maxResults: params.maxResults ?? null,
+      }),
+    runCommand: (command: string, cwd?: string | null, timeoutSecs?: number) =>
+      invoke<CommandOutput>("shell_run_command", {
+        command,
+        cwd: cwd ?? null,
+        timeoutSecs: timeoutSecs ?? null,
+        workspace: getEnv(),
+      }),
 
-  shellSessionOpen: (cwd?: string | null) =>
-    invoke<number>("shell_session_open", {
-      cwd: cwd ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  shellSessionRun: (
-    id: number,
-    command: string,
-    cwd?: string | null,
-    timeoutSecs?: number,
-  ) =>
-    invoke<{
-      stdout: string;
-      stderr: string;
-      exit_code: number | null;
-      timed_out: boolean;
-      truncated: boolean;
-      cwd_after: string;
-    }>("shell_session_run", {
-      id,
-      command,
-      cwd: cwd ?? null,
-      timeoutSecs: timeoutSecs ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  shellSessionClose: (id: number) =>
-    invoke<void>("shell_session_close", { id }),
-  shellBgSpawn: (command: string, cwd?: string | null) =>
-    invoke<number>("shell_bg_spawn", {
-      command,
-      cwd: cwd ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  shellBgLogs: (handle: number, sinceOffset?: number) =>
-    invoke<{
-      bytes: string;
-      next_offset: number;
-      dropped: number;
-      exited: boolean;
-      exit_code: number | null;
-    }>("shell_bg_logs", { handle, sinceOffset: sinceOffset ?? null }),
-  shellBgKill: (handle: number) => invoke<void>("shell_bg_kill", { handle }),
-  shellBgList: () =>
-    invoke<
-      {
-        handle: number;
-        command: string;
-        cwd: string | null;
-        started_at_ms: number;
+    shellSessionOpen: (cwd?: string | null) =>
+      invoke<number>("shell_session_open", {
+        cwd: cwd ?? null,
+        workspace: getEnv(),
+      }),
+    shellSessionRun: (
+      id: number,
+      command: string,
+      cwd?: string | null,
+      timeoutSecs?: number,
+    ) =>
+      invoke<{
+        stdout: string;
+        stderr: string;
+        exit_code: number | null;
+        timed_out: boolean;
+        truncated: boolean;
+        cwd_after: string;
+      }>("shell_session_run", {
+        id,
+        command,
+        cwd: cwd ?? null,
+        timeoutSecs: timeoutSecs ?? null,
+        workspace: getEnv(),
+      }),
+    shellSessionClose: (id: number) =>
+      invoke<void>("shell_session_close", { id }),
+    shellBgSpawn: (command: string, cwd?: string | null) =>
+      invoke<number>("shell_bg_spawn", {
+        command,
+        cwd: cwd ?? null,
+        workspace: getEnv(),
+      }),
+    shellBgLogs: (handle: number, sinceOffset?: number) =>
+      invoke<{
+        bytes: string;
+        next_offset: number;
+        dropped: number;
         exited: boolean;
         exit_code: number | null;
-      }[]
-    >("shell_bg_list"),
-  gitResolveRepo: (cwd: string) =>
-    invoke<GitRepoInfo | null>("git_resolve_repo", {
-      cwd,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitPanelSnapshot: (cwd: string) =>
-    invoke<GitPanelSnapshot>("git_panel_snapshot", {
-      cwd,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitStatus: (repoRoot: string) =>
-    invoke<GitStatusSnapshot>("git_status", {
-      repoRoot,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitDiff: (repoRoot: string, path: string | null, staged: boolean) =>
-    invoke<GitDiffResult>("git_diff", {
-      repoRoot,
-      path,
-      staged,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitDiffContent: (
-    repoRoot: string,
-    path: string,
-    staged: boolean,
-    originalPath?: string | null,
-  ) =>
-    invoke<GitDiffContentResult>("git_diff_content", {
-      repoRoot,
-      path,
-      staged,
-      originalPath: originalPath ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitStage: (repoRoot: string, paths: string[]) =>
-    invoke<void>("git_stage", {
-      repoRoot,
-      paths,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitUnstage: (repoRoot: string, paths: string[]) =>
-    invoke<void>("git_unstage", {
-      repoRoot,
-      paths,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitDiscard: (repoRoot: string, entries: GitDiscardEntry[]) =>
-    invoke<void>("git_discard", {
-      repoRoot,
-      entries,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitCommit: (repoRoot: string, message: string) =>
-    invoke<GitCommitResult>("git_commit", {
-      repoRoot,
-      message,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitFetch: (repoRoot: string) =>
-    invoke<void>("git_fetch", {
-      repoRoot,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitPullFfOnly: (repoRoot: string) =>
-    invoke<void>("git_pull_ff_only", {
-      repoRoot,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitPush: (repoRoot: string) =>
-    invoke<GitPushResult>("git_push", {
-      repoRoot,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitLog: (
-    repoRoot: string,
-    options?: { limit?: number; beforeSha?: string },
-  ) =>
-    invoke<GitLogEntry[]>("git_log", {
-      repoRoot,
-      limit: options?.limit ?? null,
-      beforeSha: options?.beforeSha ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitShowCommit: (repoRoot: string, sha: string) =>
-    invoke<GitDiffResult>("git_show_commit", {
-      repoRoot,
-      sha,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitCommitFiles: (repoRoot: string, sha: string) =>
-    invoke<GitCommitFileChange[]>("git_commit_files", {
-      repoRoot,
-      sha,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitCommitFileDiff: (
-    repoRoot: string,
-    sha: string,
-    path: string,
-    originalPath?: string | null,
-  ) =>
-    invoke<GitDiffContentResult>("git_commit_file_diff", {
-      repoRoot,
-      sha,
-      path,
-      originalPath: originalPath ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitRemoteUrl: (repoRoot: string, name?: string) =>
-    invoke<string | null>("git_remote_url", {
-      repoRoot,
-      name: name ?? null,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitListBranches: (repoRoot: string) =>
-    invoke<GitBranchListResult>("git_list_branches", {
-      repoRoot,
-      workspace: currentWorkspaceEnv(),
-    }),
-  gitCheckoutBranch: (repoRoot: string, branch: string) =>
-    invoke<void>("git_checkout_branch", {
-      repoRoot,
-      branch,
-      workspace: currentWorkspaceEnv(),
-    }),
-};
+      }>("shell_bg_logs", { handle, sinceOffset: sinceOffset ?? null }),
+    shellBgKill: (handle: number) => invoke<void>("shell_bg_kill", { handle }),
+    shellBgList: () =>
+      invoke<
+        {
+          handle: number;
+          command: string;
+          cwd: string | null;
+          started_at_ms: number;
+          exited: boolean;
+          exit_code: number | null;
+        }[]
+      >("shell_bg_list"),
+    gitResolveRepo: (cwd: string) =>
+      invoke<GitRepoInfo | null>("git_resolve_repo", {
+        cwd,
+        workspace: getEnv(),
+      }),
+    gitPanelSnapshot: (cwd: string) =>
+      invoke<GitPanelSnapshot>("git_panel_snapshot", {
+        cwd,
+        workspace: getEnv(),
+      }),
+    gitStatus: (repoRoot: string) =>
+      invoke<GitStatusSnapshot>("git_status", {
+        repoRoot,
+        workspace: getEnv(),
+      }),
+    gitDiff: (repoRoot: string, path: string | null, staged: boolean) =>
+      invoke<GitDiffResult>("git_diff", {
+        repoRoot,
+        path,
+        staged,
+        workspace: getEnv(),
+      }),
+    gitDiffContent: (
+      repoRoot: string,
+      path: string,
+      staged: boolean,
+      originalPath?: string | null,
+    ) =>
+      invoke<GitDiffContentResult>("git_diff_content", {
+        repoRoot,
+        path,
+        staged,
+        originalPath: originalPath ?? null,
+        workspace: getEnv(),
+      }),
+    gitStage: (repoRoot: string, paths: string[]) =>
+      invoke<void>("git_stage", {
+        repoRoot,
+        paths,
+        workspace: getEnv(),
+      }),
+    gitUnstage: (repoRoot: string, paths: string[]) =>
+      invoke<void>("git_unstage", {
+        repoRoot,
+        paths,
+        workspace: getEnv(),
+      }),
+    gitDiscard: (repoRoot: string, entries: GitDiscardEntry[]) =>
+      invoke<void>("git_discard", {
+        repoRoot,
+        entries,
+        workspace: getEnv(),
+      }),
+    gitCommit: (repoRoot: string, message: string) =>
+      invoke<GitCommitResult>("git_commit", {
+        repoRoot,
+        message,
+        workspace: getEnv(),
+      }),
+    gitFetch: (repoRoot: string) =>
+      invoke<void>("git_fetch", {
+        repoRoot,
+        workspace: getEnv(),
+      }),
+    gitPullFfOnly: (repoRoot: string) =>
+      invoke<void>("git_pull_ff_only", {
+        repoRoot,
+        workspace: getEnv(),
+      }),
+    gitPush: (repoRoot: string) =>
+      invoke<GitPushResult>("git_push", {
+        repoRoot,
+        workspace: getEnv(),
+      }),
+    gitLog: (
+      repoRoot: string,
+      options?: { limit?: number; beforeSha?: string },
+    ) =>
+      invoke<GitLogEntry[]>("git_log", {
+        repoRoot,
+        limit: options?.limit ?? null,
+        beforeSha: options?.beforeSha ?? null,
+        workspace: getEnv(),
+      }),
+    gitShowCommit: (repoRoot: string, sha: string) =>
+      invoke<GitDiffResult>("git_show_commit", {
+        repoRoot,
+        sha,
+        workspace: getEnv(),
+      }),
+    gitCommitFiles: (repoRoot: string, sha: string) =>
+      invoke<GitCommitFileChange[]>("git_commit_files", {
+        repoRoot,
+        sha,
+        workspace: getEnv(),
+      }),
+    gitCommitFileDiff: (
+      repoRoot: string,
+      sha: string,
+      path: string,
+      originalPath?: string | null,
+    ) =>
+      invoke<GitDiffContentResult>("git_commit_file_diff", {
+        repoRoot,
+        sha,
+        path,
+        originalPath: originalPath ?? null,
+        workspace: getEnv(),
+      }),
+    gitRemoteUrl: (repoRoot: string, name?: string) =>
+      invoke<string | null>("git_remote_url", {
+        repoRoot,
+        name: name ?? null,
+        workspace: getEnv(),
+      }),
+    gitListBranches: (repoRoot: string) =>
+      invoke<GitBranchListResult>("git_list_branches", {
+        repoRoot,
+        workspace: getEnv(),
+      }),
+    gitCheckoutBranch: (repoRoot: string, branch: string) =>
+      invoke<void>("git_checkout_branch", {
+        repoRoot,
+        branch,
+        workspace: getEnv(),
+      }),
+  };
+}
+
+export type Native = ReturnType<typeof createNative>;
+
+export const native = createNative(currentWorkspaceEnv);

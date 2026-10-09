@@ -7,9 +7,12 @@ import { getModel, providerNeedsKey, type ModelId } from "../config";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { BUILTIN_AGENTS } from "../lib/agents";
 import { useAgentsStore } from "./agentsStore";
+import type { WorkspaceEnv } from "@/modules/workspace";
 import { usePlanStore } from "./planStore";
 import { createContextAwareTransport } from "../lib/transport";
-import type { ToolContext } from "../tools/tools";
+import type { BaseToolContext } from "../lib/runContext";
+import { activeSpaceEnv } from "@/modules/spaces/lib/activeSpace";
+import { useSpaces } from "@/modules/spaces/lib/useSpaces";
 import {
   chats,
   getActiveProviderKey,
@@ -18,9 +21,16 @@ import {
   useChatStore,
 } from "./chatStore";
 
+const runEnvGetters = new Map<string, () => WorkspaceEnv>();
+
+/** Env bound to the session's current turn (for approval diffs). */
+export function getChatRunEnv(sessionId: string): WorkspaceEnv | null {
+  return runEnvGetters.get(sessionId)?.() ?? null;
+}
+
 function makeChat(sessionId: string): Chat<UIMessage> {
   const readCache = new Map<string, { size: number; hash: number }>();
-  const toolContext: ToolContext = {
+  const toolContext: BaseToolContext = {
     getCwd: () => useChatStore.getState().live.getCwd(),
     getWorkspaceRoot: () => useChatStore.getState().live.getWorkspaceRoot(),
     getTerminalContext: () => useChatStore.getState().live.getTerminalContext(),
@@ -37,9 +47,13 @@ function makeChat(sessionId: string): Chat<UIMessage> {
     getSessionId: () => sessionId,
   };
 
-  const transport = createContextAwareTransport({
+  const ctxTransport = createContextAwareTransport({
     getKeys: () => useChatStore.getState().apiKeys,
     toolContext,
+    getEnv: () => {
+      const { spaces, activeId } = useSpaces.getState();
+      return activeSpaceEnv(spaces, activeId);
+    },
     getModelId: () => useChatStore.getState().selectedModelId,
     getCustomInstructions: () =>
       usePreferencesStore.getState().customInstructions,
@@ -98,7 +112,9 @@ function makeChat(sessionId: string): Chat<UIMessage> {
         lastCachedTokens: delta.lastCachedTokens,
       });
     },
-  }) as unknown as ChatTransport<UIMessage>;
+  });
+  runEnvGetters.set(sessionId, ctxTransport.getRunEnv);
+  const transport = ctxTransport as unknown as ChatTransport<UIMessage>;
 
   const initialMessages = seedMessages.get(sessionId);
   seedMessages.delete(sessionId);

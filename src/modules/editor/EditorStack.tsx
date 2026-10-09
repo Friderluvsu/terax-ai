@@ -1,7 +1,8 @@
 import { cn, isHtmlPath, isMarkdownPath, isSvgPath } from "@/lib/utils";
 import { DocumentViewToggle, MarkdownViewToggle } from "@/modules/markdown";
 import type { DocView, EditorTab, Tab } from "@/modules/tabs";
-import { envCaps, useWorkspaceEnvStore } from "@/modules/workspace";
+import { envForSpace, useSpaces } from "@/modules/spaces";
+import { envCaps } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { EditorPane, type EditorPaneHandle } from "./EditorPane";
 import { HtmlSplitView } from "./HtmlSplitView";
@@ -30,8 +31,7 @@ export function EditorStack({
   onSetDocView,
   rootHint,
 }: Props) {
-  const isLocal = useWorkspaceEnvStore((s) => s.env.kind === "local");
-  const htmlPreview = useWorkspaceEnvStore((s) => envCaps(s.env).htmlPreview);
+  const spaces = useSpaces((s) => s.spaces);
   const editors = tabs.filter(
     (t): t is EditorTab => t.kind === "editor" && !t.cold,
   );
@@ -104,12 +104,15 @@ export function EditorStack({
     <div className="relative h-full w-full">
       {editors.map((t) => {
         const visible = t.id === activeId;
+        const env = envForSpace(t.spaceId, spaces);
+        const isLocal = env.kind === "local";
         const htmlTab =
-          htmlPreview && (isHtmlPath(t.path) || isSvgPath(t.path));
+          envCaps(env).htmlPreview && (isHtmlPath(t.path) || isSvgPath(t.path));
         const pane = (
           <EditorPane
             ref={getRefCallback(t.id)}
             path={t.path}
+            env={env}
             overrideLanguage={t.overrideLanguage}
             onDirtyChange={getDirtyCallback(t.id)}
             onClose={getCloseCallback(t.id)}

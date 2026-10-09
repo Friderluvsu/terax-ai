@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::modules::fs::to_canon;
 use crate::modules::workspace::{local_path, WorkspaceEnv, WorkspaceRegistry};
@@ -97,13 +97,50 @@ pub struct FsWatchState {
 struct WatchInner {
     watcher: RecommendedWatcher,
     // Explorer (expanded dirs) and editor (dirs of open files) can request the
-    // same dir; unwatch only when the last requester releases it.
-    refcounts: HashMap<PathBuf, usize>,
+    // same dir; unwatch only when the last requester releases it. Counts are
+    // kept per environment scope key so events can be tagged with their owner.
+    refcounts: HashMap<PathBuf, HashMap<String, usize>>,
 }
+
+const LOCAL_ENV: &str = "local";
 
 #[derive(Clone, serde::Serialize)]
 struct ChangedPayload {
     paths: Vec<String>,
+    env: String,
+}
+
+// Event paths arrive as `to_canon` strings (`C:/dir/file`) while refcount keys
+// are raw canonical paths (`\\?\C:\dir` on Windows), so keys are normalized with
+// `norm` before comparing. Pure in `norm` so the Windows shape is testable anywhere.
+fn envs_for_path(
+    owners_by_key: &HashMap<String, &HashMap<String, usize>>,
+    path: &str,
+) -> Vec<String> {
+    let owners = owners_by_key.get(path).or_else(|| {
+        path.rsplit_once('/')
+            .and_then(|(parent, _)| owners_by_key.get(parent))
+    });
+    match owners {
+        Some(map) if !map.is_empty() => map.keys().cloned().collect(),
+        _ => vec![LOCAL_ENV.to_string()],
+    }
+}
+
+fn group_by_env(
+    refcounts: &HashMap<PathBuf, HashMap<String, usize>>,
+    paths: HashSet<String>,
+    norm: impl Fn(&Path) -> String,
+) -> HashMap<String, Vec<String>> {
+    let owners_by_key: HashMap<String, &HashMap<String, usize>> =
+        refcounts.iter().map(|(k, v)| (norm(k), v)).collect();
+    let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+    for path in paths {
+        for env in envs_for_path(&owners_by_key, &path) {
+            grouped.entry(env).or_default().push(path.clone());
+        }
+    }
+    grouped
 }
 
 fn ensure_started(state: &FsWatchState, app: &AppHandle) -> Result<(), String> {
@@ -160,12 +197,17 @@ fn drain_loop(rx: mpsc::Receiver<notify::Result<Event>>, app: AppHandle) {
         if paths.is_empty() {
             continue;
         }
-        let _ = app.emit(
-            "fs:changed",
-            ChangedPayload {
-                paths: paths.into_iter().collect(),
-            },
-        );
+        let grouped = {
+            let state = app.state::<FsWatchState>();
+            let guard = state.inner.lock().expect("fs watch state poisoned");
+            match guard.as_ref() {
+                Some(inner) => group_by_env(&inner.refcounts, paths, |p| to_canon(p)),
+                None => group_by_env(&HashMap::new(), paths, |p| to_canon(p)),
+            }
+        };
+        for (env, paths) in grouped {
+            let _ = app.emit("fs:changed", ChangedPayload { paths, env });
+        }
     }
 }
 
@@ -180,34 +222,44 @@ fn collect(set: &mut HashSet<String>, ev: notify::Result<Event>) {
 }
 
 // Returns the paths whose refcount was taken, so a caller can release exactly those.
-fn add_paths(inner: &mut WatchInner, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+fn add_paths(inner: &mut WatchInner, paths: Vec<PathBuf>, env: &str) -> Vec<PathBuf> {
     let mut added = Vec::with_capacity(paths.len());
     for canonical in paths {
-        let current = inner.refcounts.get(&canonical).copied().unwrap_or(0);
-        if current == 0 {
+        if !inner.refcounts.contains_key(&canonical) {
             match inner.watcher.watch(&canonical, RecursiveMode::NonRecursive) {
-                Ok(()) => {
-                    inner.refcounts.insert(canonical.clone(), 1);
-                    added.push(canonical);
+                Ok(()) => {}
+                Err(e) => {
+                    log::debug!("fs_watch add {} failed: {e}", canonical.display());
+                    continue;
                 }
-                Err(e) => log::debug!("fs_watch add {} failed: {e}", canonical.display()),
             }
-        } else {
-            inner.refcounts.insert(canonical.clone(), current + 1);
-            added.push(canonical);
         }
+        *inner
+            .refcounts
+            .entry(canonical.clone())
+            .or_default()
+            .entry(env.to_string())
+            .or_insert(0) += 1;
+        added.push(canonical);
     }
     added
 }
 
-fn remove_paths(inner: &mut WatchInner, paths: Vec<PathBuf>) {
+fn remove_paths(inner: &mut WatchInner, paths: Vec<PathBuf>, env: &str) {
     for key in paths {
-        let current = inner.refcounts.get(&key).copied().unwrap_or(0);
-        if current <= 1 {
+        let Some(owners) = inner.refcounts.get_mut(&key) else {
+            continue;
+        };
+        if let Some(count) = owners.get_mut(env) {
+            if *count <= 1 {
+                owners.remove(env);
+            } else {
+                *count -= 1;
+            }
+        }
+        if owners.is_empty() {
             inner.refcounts.remove(&key);
             let _ = inner.watcher.unwatch(&key);
-        } else {
-            inner.refcounts.insert(key, current - 1);
         }
     }
 }
@@ -278,7 +330,7 @@ pub fn watch_preview_dirs(
     let mut guard = state.inner.lock().expect("fs watch state poisoned");
     guard
         .as_mut()
-        .map(|inner| add_paths(inner, prepared))
+        .map(|inner| add_paths(inner, prepared, LOCAL_ENV))
         .unwrap_or_default()
 }
 
@@ -290,7 +342,7 @@ pub fn unwatch_preview_dirs(state: &FsWatchState, dirs: impl IntoIterator<Item =
     }
     let mut guard = state.inner.lock().expect("fs watch state poisoned");
     if let Some(inner) = guard.as_mut() {
-        remove_paths(inner, dirs);
+        remove_paths(inner, dirs, LOCAL_ENV);
     }
 }
 
@@ -310,7 +362,7 @@ pub fn fs_watch_add(
     ensure_started(&state, &app)?;
     let mut guard = state.inner.lock().expect("fs watch state poisoned");
     if let Some(inner) = guard.as_mut() {
-        add_paths(inner, prepared);
+        add_paths(inner, prepared, &workspace.scope_key());
     }
     Ok(())
 }
@@ -325,7 +377,7 @@ pub fn fs_watch_remove(
     let prepared = prepare_remove(&workspace, paths)?;
     let mut guard = state.inner.lock().expect("fs watch state poisoned");
     if let Some(inner) = guard.as_mut() {
-        remove_paths(inner, prepared);
+        remove_paths(inner, prepared, &workspace.scope_key());
     }
     Ok(())
 }
@@ -341,6 +393,53 @@ mod tests {
         assert!(is_skipped(Path::new("/p/obj")));
         assert!(!is_skipped(Path::new("/a/src")));
         assert!(!is_skipped(Path::new("/a/node_modules/pkg")));
+    }
+
+    #[test]
+    fn changed_events_are_grouped_by_owning_env() {
+        let mut refcounts: HashMap<PathBuf, HashMap<String, usize>> = HashMap::new();
+        refcounts.insert(
+            PathBuf::from("/a"),
+            HashMap::from([("local".to_string(), 1)]),
+        );
+        refcounts.insert(
+            PathBuf::from("/b"),
+            HashMap::from([("wsl:Ubuntu".to_string(), 2)]),
+        );
+        let paths: HashSet<String> = ["/a/x", "/b/y", "/c/z"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let grouped = group_by_env(&refcounts, paths, |p| to_canon(p));
+        let mut local = grouped["local"].clone();
+        local.sort();
+        assert_eq!(local, vec!["/a/x".to_string(), "/c/z".to_string()]);
+        assert_eq!(grouped["wsl:Ubuntu"], vec!["/b/y".to_string()]);
+    }
+
+    #[test]
+    fn windows_verbatim_keys_still_find_their_owner() {
+        let mut refcounts: HashMap<PathBuf, HashMap<String, usize>> = HashMap::new();
+        refcounts.insert(
+            PathBuf::from(r"\\?\UNC\wsl.localhost\Ubuntu\home\u"),
+            HashMap::from([("wsl:Ubuntu".to_string(), 1)]),
+        );
+        refcounts.insert(
+            PathBuf::from(r"\\?\C:\dir"),
+            HashMap::from([("local".to_string(), 1)]),
+        );
+        let paths: HashSet<String> = ["//wsl.localhost/Ubuntu/home/u/f", "C:/dir/file"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let grouped = group_by_env(&refcounts, paths, |p| {
+            crate::modules::fs::strip_verbatim(&p.to_string_lossy())
+        });
+        assert_eq!(
+            grouped["wsl:Ubuntu"],
+            vec!["//wsl.localhost/Ubuntu/home/u/f".to_string()]
+        );
+        assert_eq!(grouped["local"], vec!["C:/dir/file".to_string()]);
     }
 
     #[test]

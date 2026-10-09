@@ -327,6 +327,15 @@ impl WorkspaceEnv {
     pub fn from_option(workspace: Option<Self>) -> Self {
         workspace.unwrap_or_default()
     }
+
+    /// Mirrors workspaceScopeKey in src/modules/workspace/env.ts.
+    pub fn scope_key(&self) -> String {
+        match self {
+            WorkspaceEnv::Local => "local".to_string(),
+            WorkspaceEnv::Wsl { distro } => format!("wsl:{distro}"),
+            WorkspaceEnv::Ssh { host } => format!("ssh:{host}"),
+        }
+    }
 }
 
 pub const SSH_UNSUPPORTED: &str = "not supported in SSH workspace yet";

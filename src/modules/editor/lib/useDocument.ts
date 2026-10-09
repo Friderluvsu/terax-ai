@@ -1,12 +1,9 @@
 import { notifyDocumentSaved } from "@/modules/lsp";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import {
-  currentWorkspaceEnv,
-  fsFor,
-  type FsReadResult,
-} from "@/modules/workspace";
+import type { FsReadResult, WorkspaceEnv } from "@/modules/workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { documentIo } from "./documentIo";
 import { detectEol, type Eol, normalizeToLf, restoreEol } from "./eol";
 
 type ReadResult = FsReadResult;
@@ -23,10 +20,11 @@ export type DocumentState =
 
 type Options = {
   path: string;
+  env: WorkspaceEnv;
   onDirtyChange?: (dirty: boolean) => void;
 };
 
-export function useDocument({ path, onDirtyChange }: Options) {
+export function useDocument({ path, env, onDirtyChange }: Options) {
   const [doc, setDoc] = useState<DocumentState>({ status: "loading" });
   const [dirty, setDirty] = useState(false);
 
@@ -58,25 +56,23 @@ export function useDocument({ path, onDirtyChange }: Options) {
 
   const writeToDisk = useCallback(async () => {
     const content = bufferRef.current;
-    const mtime = await fsFor(currentWorkspaceEnv()).writeFile(
-      path,
+    const mtime = await documentIo(env, path).write(
       restoreEol(content, eolRef.current),
-      "editor",
     );
     diskMtimeRef.current = mtime;
     savedRef.current = content;
     // Edits typed while the write was in flight must stay dirty.
     setDirty(bufferRef.current !== content);
     notifyDocumentSaved(path);
-  }, [path]);
+  }, [path, env]);
 
   // False when the write was withheld because the file changed on disk
   // since load; overwriting is an explicit user action from the toast.
   const saveNow = useCallback(async (): Promise<boolean> => {
     const known = diskMtimeRef.current;
     if (known !== null) {
-      const stat = await fsFor(currentWorkspaceEnv())
-        .stat(path)
+      const stat = await documentIo(env, path)
+        .stat()
         .catch(() => null);
       if (stat && stat.mtime !== known) {
         const name = path.split(/[\\/]/).pop() ?? path;
@@ -90,7 +86,7 @@ export function useDocument({ path, onDirtyChange }: Options) {
     }
     await writeToDisk();
     return true;
-  }, [path, writeToDisk]);
+  }, [path, env, writeToDisk]);
 
   // Notify parent of dirty transitions.
   const onDirtyChangeRef = useRef(onDirtyChange);
@@ -124,8 +120,8 @@ export function useDocument({ path, onDirtyChange }: Options) {
   }, []);
 
   const readFromDisk = useCallback(
-    (force: boolean) => fsFor(currentWorkspaceEnv()).readFile(path, { force }),
-    [path],
+    (force: boolean) => documentIo(env, path).read(force),
+    [path, env],
   );
 
   // Load on path change.

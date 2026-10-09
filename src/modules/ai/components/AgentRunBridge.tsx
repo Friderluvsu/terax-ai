@@ -1,7 +1,8 @@
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import type { ToolUIPart, UIMessagePart } from "ai";
 import { useEffect, useMemo, useRef } from "react";
-import { native } from "../lib/native";
+import { createNative } from "../lib/native";
+import { currentWorkspaceEnv, type WorkspaceEnv } from "@/modules/workspace";
 import { checkReadable } from "../lib/security";
 import { resolvePath } from "../tools/tools";
 import {
@@ -9,7 +10,7 @@ import {
   useChatStore,
   type AgentRunStatus,
 } from "../store/chatStore";
-import { getOrCreateChat } from "../store/chatRuntime";
+import { getChatRunEnv, getOrCreateChat } from "../store/chatRuntime";
 
 /**
  * Headless bridge that mirrors chat lifecycle into the store, so the status
@@ -209,6 +210,7 @@ function Bridge({
     let cancelled = false;
     void (async () => {
       const cwd = useChatStore.getState().live.getCwd();
+      const runEnv = getChatRunEnv(sessionId) ?? currentWorkspaceEnv();
       for (const p of pending) {
         if (cancelled) return;
         // Mark as opened up-front so a re-render mid-await doesn't double-open.
@@ -219,7 +221,7 @@ function Bridge({
         } catch {
           abs = p.path;
         }
-        const original = await readOriginal(abs);
+        const original = await readOriginal(abs, runEnv);
         if (cancelled) return;
         let proposed = "";
         if (p.derive.kind === "literal") {
@@ -351,13 +353,14 @@ function applyEditsLocally(
 
 async function readOriginal(
   abs: string,
+  env: WorkspaceEnv,
 ): Promise<{ content: string; isNewFile: boolean }> {
   // The fs guard rejects sensitive paths even on read; mirror that here so
   // the user sees an empty "before" rather than an error tab.
   const safety = checkReadable(abs);
   if (!safety.ok) return { content: "", isNewFile: false };
   try {
-    const r = await native.readFile(abs);
+    const r = await createNative(() => env).readFile(abs);
     if (r.kind === "text") return { content: r.content, isNewFile: false };
     // Binary or oversized — we can't render the original sensibly. Show the
     // proposed content as a "new" view; the user can still cancel.

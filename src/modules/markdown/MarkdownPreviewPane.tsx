@@ -2,7 +2,7 @@ import { MarkdownCode } from "@/components/ai-elements/markdown-code";
 import { cn } from "@/lib/utils";
 import { parentDir, watchAdd, watchRemove } from "@/modules/explorer/lib/watch";
 import { useHtmlPreviewReload } from "@/modules/html-preview/lib/useHtmlPreviewReload";
-import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
+import { fsFor, type WorkspaceEnv } from "@/modules/workspace";
 import { useCallback, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
 import { MarkdownLink } from "./MarkdownLink";
@@ -17,20 +17,21 @@ type Status =
 
 type Props = {
   path: string;
+  env: WorkspaceEnv;
   visible: boolean;
   onSetView: (mode: "rendered" | "raw") => void;
 };
 
 const components = { a: MarkdownLink, code: MarkdownCode };
 
-export function MarkdownPreviewPane({ path, visible, onSetView }: Props) {
+export function MarkdownPreviewPane({ path, env, visible, onSetView }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
 
   const load = useCallback(
     (initial: boolean) => {
       let cancelled = false;
       if (initial) setStatus({ kind: "loading" });
-      fsFor(currentWorkspaceEnv())
+      fsFor(env)
         .readFile(path)
         .then((res) => {
           if (cancelled) return;
@@ -49,20 +50,25 @@ export function MarkdownPreviewPane({ path, visible, onSetView }: Props) {
         cancelled = true;
       };
     },
-    [path],
+    [path, env],
   );
 
   useEffect(() => load(true), [load]);
 
   useEffect(() => {
     const dir = parentDir(path);
-    watchAdd([dir]);
-    return () => watchRemove([dir]);
-  }, [path]);
+    watchAdd([dir], env);
+    return () => watchRemove([dir], env);
+  }, [path, env]);
 
-  useHtmlPreviewReload(path, visible, () => {
-    load(false);
-  });
+  useHtmlPreviewReload(
+    path,
+    visible,
+    () => {
+      load(false);
+    },
+    env,
+  );
 
   return (
     <div

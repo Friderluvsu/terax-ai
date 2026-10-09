@@ -75,6 +75,7 @@ import {
   useSourceControlContext,
 } from "@/modules/source-control";
 import {
+  envForSpace,
   SpaceSwitcher,
   useSpacePersistence,
   useSpaces,
@@ -116,7 +117,6 @@ import {
 import { FORK_UPDATER_DISABLED } from "@/lib/fork";
 import { UpdaterDialog } from "@/modules/updater";
 import {
-  currentWorkspaceScopeKey,
   envCaps,
   useWorkspaceEnvStore,
   type WorkspaceEnv,
@@ -1248,10 +1248,14 @@ export default function App() {
   const handleTerminalCwd = useCallback(
     (leafId: number, cwd: string) => {
       setLeafCwd(leafId, cwd);
-      const authKey = `${currentWorkspaceScopeKey()}\0${cwd}`;
+      const owner = tabsRef.current.find(
+        (t) => t.kind === "terminal" && leafIds(t.paneTree).includes(leafId),
+      );
+      const env = envForSpace(owner?.spaceId);
+      const authKey = `${workspaceScopeKey(env)}\0${cwd}`;
       if (cwd && !authorizedCwds.current.has(authKey)) {
         authorizedCwds.current.add(authKey);
-        native.workspaceAuthorize(cwd).catch(() => {
+        native.workspaceAuthorize(cwd, env).catch(() => {
           authorizedCwds.current.delete(authKey);
         });
       }

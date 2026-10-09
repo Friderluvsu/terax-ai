@@ -1,6 +1,6 @@
 import { quoteShellArg } from "@/lib/shellQuote";
 import type { EditorFormatter } from "@/modules/settings/store";
-import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
+import { fsFor, type WorkspaceEnv } from "@/modules/workspace";
 import type { EditorView } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -117,6 +117,7 @@ function buildCommand(
 export async function runExternalFormatter(
   formatter: ExternalFormatter,
   path: string,
+  env: WorkspaceEnv,
   customTemplate = "",
 ): Promise<string | null> {
   const command = buildCommand(formatter, path, customTemplate);
@@ -128,7 +129,7 @@ export async function runExternalFormatter(
       command,
       cwd: dirname(path),
       timeoutSecs: 20,
-      workspace: currentWorkspaceEnv(),
+      workspace: env,
     });
     if (out.timed_out) return `${formatter} timed out`;
     if (out.exit_code !== 0) {
@@ -142,8 +143,9 @@ export async function runExternalFormatter(
 
 export async function readFileText(
   path: string,
+  env: WorkspaceEnv,
 ): Promise<{ text: string; mtime: number } | null> {
-  const res = await fsFor(currentWorkspaceEnv())
+  const res = await fsFor(env)
     .readFile(path)
     .catch(() => null);
   if (res?.kind !== "text" || res.content == null) return null;

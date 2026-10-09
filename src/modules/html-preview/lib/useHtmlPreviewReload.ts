@@ -1,4 +1,5 @@
 import { pathAtOrUnder } from "@/lib/paths";
+import { fsEventInEnv, type WorkspaceEnv } from "@/modules/workspace";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useCallback, useEffect, useRef } from "react";
 
@@ -62,6 +63,7 @@ export function useHtmlPreviewReload(
   root: string | null,
   visible: boolean,
   onReload: () => void,
+  env?: WorkspaceEnv,
 ) {
   const onReloadRef = useRef(onReload);
   onReloadRef.current = onReload;
@@ -78,14 +80,17 @@ export function useHtmlPreviewReload(
     );
     schedulerRef.current = scheduler;
     const win = getCurrentWebviewWindow();
-    const handle = (paths: string[]) => {
+    const handle = (paths: string[], eventEnv?: string) => {
+      if (env && !fsEventInEnv(eventEnv, env)) return;
       if (shouldReloadFor(paths, root)) scheduler.notify();
     };
-    const written = win.listen<{ path: string }>("fs:file-written", (e) =>
-      handle([e.payload.path]),
+    const written = win.listen<{ path: string; env?: string }>(
+      "fs:file-written",
+      (e) => handle([e.payload.path], e.payload.env),
     );
-    const changed = win.listen<{ paths: string[] }>("fs:changed", (e) =>
-      handle(e.payload.paths),
+    const changed = win.listen<{ paths: string[]; env?: string }>(
+      "fs:changed",
+      (e) => handle(e.payload.paths, e.payload.env),
     );
     return () => {
       scheduler.dispose();
@@ -93,7 +98,7 @@ export function useHtmlPreviewReload(
       void written.then((un) => un());
       void changed.then((un) => un());
     };
-  }, [root]);
+  }, [root, env]);
 
   useEffect(() => {
     schedulerRef.current?.setVisible(visible);
