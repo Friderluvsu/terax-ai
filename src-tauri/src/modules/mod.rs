@@ -9,6 +9,7 @@ pub mod lsp;
 pub mod net;
 pub mod proc;
 pub mod pty;
+pub mod scripts;
 pub mod secrets;
 pub mod security;
 pub mod shell;

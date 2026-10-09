@@ -1,8 +1,10 @@
 import { cn, isMarkdownPath } from "@/lib/utils";
 import { MarkdownViewToggle } from "@/modules/markdown";
 import type { EditorTab, Tab } from "@/modules/tabs";
+import { useWorkspaceEnvStore } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { EditorPane, type EditorPaneHandle } from "./EditorPane";
+import { RunScriptButton } from "./RunScriptButton";
 
 type Props = {
   tabs: Tab[];
@@ -11,6 +13,7 @@ type Props = {
   registerHandle: (id: number, handle: EditorPaneHandle | null) => void;
   onCloseTab: (id: number) => void;
   onSetMarkdownView: (id: number, mode: "rendered" | "raw") => void;
+  onRunScript: (path: string) => void;
 };
 
 export function EditorStack({
@@ -20,7 +23,9 @@ export function EditorStack({
   registerHandle,
   onCloseTab,
   onSetMarkdownView,
+  onRunScript,
 }: Props) {
+  const isLocal = useWorkspaceEnvStore((s) => s.env.kind === "local");
   const editors = tabs.filter(
     (t): t is EditorTab => t.kind === "editor" && !t.cold,
   );
@@ -109,6 +114,13 @@ export function EditorStack({
                   onChange={(mode) => onSetMarkdownView(t.id, mode)}
                   renderedDisabled={t.dirty}
                   renderedHint="Save to preview"
+                />
+              )}
+              {isLocal && (
+                <RunScriptButton
+                  path={t.path}
+                  dirty={t.dirty}
+                  onRun={onRunScript}
                 />
               )}
               <EditorPane

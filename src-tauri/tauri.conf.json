@@ -112,6 +112,12 @@
           "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties",
           "sh", "bash", "zsh", "sql", "graphql", "proto"
         ]
+      },
+      {
+        "name": "Terax Shell Script",
+        "role": "Shell",
+        "ext": ["command", "tool"],
+        "contentTypes": ["com.apple.terminal.shell-script"]
       }
     ]
   },

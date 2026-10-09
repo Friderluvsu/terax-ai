@@ -30,6 +30,7 @@ export const DEFAULT_THEME_ID = "terax-default";
 export type BackgroundKind = "none" | "image";
 
 export type TerminalCursorStyle = "bar" | "block" | "underline";
+export type LaunchCommandFiles = "run" | "edit";
 
 export const EDITOR_THEMES = [
   "kanagawa",
@@ -173,6 +174,7 @@ export type Preferences = {
   agentNotifications: boolean;
   agentNotificationSound: boolean;
   agentLaunchCommands: AgentLaunchCommands;
+  launchCommandFiles: LaunchCommandFiles;
   defaultWorkspaceEnv: string;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
   editorAutoSave: boolean;
@@ -281,6 +283,7 @@ const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
 const KEY_AGENT_NOTIFICATION_SOUND = "agentNotificationSound";
 const KEY_AGENT_LAUNCH_COMMANDS = "agentLaunchCommands";
+const KEY_LAUNCH_COMMAND_FILES = "launchCommandFiles";
 const KEY_DEFAULT_WORKSPACE_ENV = "defaultWorkspaceEnv";
 const KEY_SHORTCUTS = "shortcuts";
 const KEY_EDITOR_AUTO_SAVE = "editorAutoSave";
@@ -380,6 +383,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   agentNotifications: true,
   agentNotificationSound: true,
   agentLaunchCommands: DEFAULT_AGENT_LAUNCH_COMMANDS,
+  launchCommandFiles: "run",
   defaultWorkspaceEnv: "local",
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
   editorAutoSave: false,
@@ -572,6 +576,8 @@ export async function loadPreferences(): Promise<Preferences> {
     agentLaunchCommands: normalizeAgentLaunchCommands(
       get<unknown>(KEY_AGENT_LAUNCH_COMMANDS),
     ),
+    launchCommandFiles:
+      get<string>(KEY_LAUNCH_COMMAND_FILES) === "edit" ? "edit" : "run",
     defaultWorkspaceEnv:
       get<string>(KEY_DEFAULT_WORKSPACE_ENV) ??
       DEFAULT_PREFERENCES.defaultWorkspaceEnv,
@@ -1060,6 +1066,12 @@ export async function setAgentLaunchCommands(
   );
 }
 
+export async function setLaunchCommandFiles(
+  value: LaunchCommandFiles,
+): Promise<void> {
+  await writePref(KEY_LAUNCH_COMMAND_FILES, value === "edit" ? "edit" : "run");
+}
+
 export async function setDefaultWorkspaceEnv(value: string): Promise<void> {
   await writePref(KEY_DEFAULT_WORKSPACE_ENV, value);
 }
@@ -1135,6 +1147,7 @@ export async function onPreferencesChange(
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
     [KEY_AGENT_NOTIFICATION_SOUND]: "agentNotificationSound",
     [KEY_AGENT_LAUNCH_COMMANDS]: "agentLaunchCommands",
+    [KEY_LAUNCH_COMMAND_FILES]: "launchCommandFiles",
     [KEY_DEFAULT_WORKSPACE_ENV]: "defaultWorkspaceEnv",
     [KEY_SHORTCUTS]: "shortcuts",
     [KEY_EDITOR_AUTO_SAVE]: "editorAutoSave",
