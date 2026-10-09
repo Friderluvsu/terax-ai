@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import secretPathsFixture from "../../../../src-tauri/tests/fixtures/secret_paths.json";
 import {
+  PROTECTED_DIRS,
   checkReadable,
   checkReadableCanonical,
   checkShellCommand,
@@ -384,7 +385,11 @@ describe("secret path fixture parity with Rust", () => {
   const fixture = secretPathsFixture as {
     cases: { path: string; secret: boolean }[];
     local_only: { path: string; secret: boolean }[];
+    protected_dirs: string[];
   };
+  it("PROTECTED_DIRS equals the fixture list", () => {
+    expect([...PROTECTED_DIRS]).toEqual(fixture.protected_dirs);
+  });
   it.each([...fixture.cases, ...fixture.local_only])(
     "$path -> secret=$secret",
     ({ path, secret }) => {

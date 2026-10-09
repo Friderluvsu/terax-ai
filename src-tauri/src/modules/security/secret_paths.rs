@@ -202,6 +202,7 @@ mod tests {
     struct Fixture {
         cases: Vec<Case>,
         local_only: Vec<Case>,
+        protected_dirs: Vec<String>,
     }
 
     fn fixture() -> Fixture {
@@ -220,6 +221,11 @@ mod tests {
             );
             assert_eq!(is_secret_posix_path(&c.path), c.secret, "posix {}", c.path);
         }
+    }
+
+    #[test]
+    fn protected_dirs_equal_fixture() {
+        assert_eq!(PROTECTED_DIRS.to_vec(), fixture().protected_dirs);
     }
 
     #[test]
