@@ -22,7 +22,9 @@ import { LatestClipboardWrite } from "@/modules/terminal/lib/LatestClipboardWrit
 import { hostname } from "@tauri-apps/plugin-os";
 import { createOsc7HostFilter } from "@/modules/terminal/lib/osc-handlers";
 import { GhosttySemanticEventRouter } from "./core/GhosttySemanticEventRouter";
+import { LongCommandTracker } from "./core/LongCommandTracker";
 import { PromptInputTracker } from "./core/PromptInputTracker";
+import { emitLongCommand } from "../lib/longCommandEvents";
 import { getGhosttyCoreRuntime } from "./GhosttyCoreRuntime";
 import type { GhosttyTerminalModelApi } from "./GhosttyTerminalModel";
 import {
@@ -81,6 +83,7 @@ type GhosttySession = {
   lastCwd: string | null;
   model: GhosttyTerminalModelApi | null;
   promptTracker: PromptInputTracker;
+  longCommands: LongCommandTracker;
   surface: GhosttySurface | null;
   surfaceOptions: GhosttySurfaceBaseOptions | null;
   input: GhosttyInputController | null;
@@ -444,6 +447,7 @@ export async function respawnGhosttySession(
   session.model?.dispose();
   session.model = null;
   session.promptTracker.reset();
+  session.longCommands.reset();
   session.callbacks.onModel?.(null);
   session.ptyResize.reset();
   session.writer.detach();
@@ -553,6 +557,7 @@ function ensureSession(
     lastCwd: null,
     model: null,
     promptTracker: new PromptInputTracker(),
+    longCommands: new LongCommandTracker(),
     surface: null,
     surfaceOptions: null,
     input: null,
@@ -603,6 +608,7 @@ function initializeSession(session: GhosttySession): Promise<void> {
         session.model?.dispose();
         session.model = null;
         session.promptTracker.reset();
+        session.longCommands.reset();
         session.writer.clear();
         session.ptyResize.reset();
       }
@@ -699,6 +705,8 @@ async function initializeSessionGeneration(
     onEvent: (event) => {
       semanticEvents.handle(event);
       session.promptTracker.handle(event);
+      const finished = session.longCommands.handle(event);
+      if (finished) emitLongCommand({ leafId: session.leafId, ...finished });
       ghosttyBlocks(session.leafId)?.controller?.handle(
         event,
         session.lastCwd ?? session.initialCwd ?? "",
@@ -711,6 +719,7 @@ async function initializeSessionGeneration(
   }
   mark("modelReadyMs");
   session.promptTracker.reset();
+  session.longCommands.reset();
   session.model = model;
   session.callbacks.onModel?.(model);
   await ghosttyBlocks(session.leafId)?.attach(model, () =>

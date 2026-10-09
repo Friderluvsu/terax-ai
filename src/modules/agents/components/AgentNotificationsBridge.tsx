@@ -1,8 +1,10 @@
 import type { Tab } from "@/modules/tabs";
-import { hasLeaf, leafIdForPty } from "@/modules/terminal";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { hasLeaf, leafIdForPty, onLongCommand } from "@/modules/terminal";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import { displayAgent } from "../lib/format";
+import { buildLongCommandMessage } from "../lib/longCommand";
 import { maybeTriggerManagedReview } from "../lib/review";
 import { routeAgentNotification } from "../lib/route";
 import type { AgentSession, AgentSignal } from "../lib/types";
@@ -120,6 +122,40 @@ export function AgentNotificationsBridge({
       unlisten?.();
     };
   }, []);
+
+  useEffect(
+    () =>
+      onLongCommand((e) => {
+        const ctx = ctxRef.current;
+        const tab = ctx.tabs.find(
+          (t) => t.kind === "terminal" && hasLeaf(t.paneTree, e.leafId),
+        );
+        if (!tab) return;
+        const message = buildLongCommandMessage({
+          command: e.command,
+          exitCode: e.exitCode,
+          durationMs: e.durationMs,
+          thresholdSeconds:
+            usePreferencesStore.getState().notifyLongCommandsSeconds,
+          isPrivate: tab.kind === "terminal" && tab.private === true,
+        });
+        if (!message) return;
+        routeAgentNotification({
+          source: "terminal",
+          agent: "command",
+          kind: message.kind,
+          title: message.title,
+          body: message.body,
+          focused: ctx.focused,
+          visible: ctx.activeId === tab.id,
+          allowToast: true,
+          tabId: tab.id,
+          leafId: e.leafId,
+          onActivate: () => ctx.onActivate(tab.id, e.leafId),
+        });
+      }),
+    [],
+  );
 
   return null;
 }
