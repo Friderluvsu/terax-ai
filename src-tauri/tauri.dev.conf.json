@@ -1,0 +1,12 @@
+{
+  "productName": "Terax Dev",
+  "identifier": "app.crynta.terax.dev",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}

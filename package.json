@@ -16,6 +16,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "fork:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "fork:build": "tauri build --ignore-version-mismatches --bundles app --config src-tauri/tauri.fork.conf.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "bench:ghostty": "vitest bench src/modules/terminal/ghostty/AdaptedGhostty.bench.ts --run",

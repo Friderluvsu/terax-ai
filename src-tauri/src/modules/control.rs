@@ -113,7 +113,7 @@ pub fn start(app: tauri::AppHandle, state: ControlState) -> Result<(), String> {
         .map_err(|error| format!("read local control address: {error}"))?
         .to_string();
     let token = generate_token()?;
-    let descriptor_path = descriptor_path()?;
+    let descriptor_path = descriptor_path(&app.config().identifier)?;
     sweep_stale_launcher_dirs(&descriptor_path);
     let cli_path = find_bundled_cli();
     let launcher_dir = cli_path.as_deref().and_then(|cli_path| {
@@ -566,10 +566,20 @@ fn generate_token() -> Result<String, String> {
     Ok(token)
 }
 
-fn descriptor_path() -> Result<PathBuf, String> {
+const PRIMARY_IDENTIFIER: &str = "app.crynta.terax";
+
+fn control_dir_name(identifier: &str) -> String {
+    if identifier == PRIMARY_IDENTIFIER {
+        "terax".to_string()
+    } else {
+        format!("terax-{identifier}")
+    }
+}
+
+fn descriptor_path(identifier: &str) -> Result<PathBuf, String> {
     let cache =
         dirs::cache_dir().ok_or_else(|| "could not resolve user cache directory".to_string())?;
-    let dir = cache.join("terax");
+    let dir = cache.join(control_dir_name(identifier));
     std::fs::create_dir_all(&dir)
         .map_err(|error| format!("create control directory {}: {error}", dir.display()))?;
     #[cfg(unix)]
@@ -769,6 +779,19 @@ fn remove_launcher_dir(bin_dir: &Path) {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn control_dir_is_isolated_per_identifier() {
+        assert_eq!(control_dir_name("app.crynta.terax"), "terax");
+        assert_eq!(
+            control_dir_name("app.crynta.terax.dev"),
+            "terax-app.crynta.terax.dev"
+        );
+        assert_ne!(
+            control_dir_name("dev.terax.fork"),
+            control_dir_name("app.crynta.terax")
+        );
+    }
 
     fn open_params(path: String) -> OpenParams {
         OpenParams {

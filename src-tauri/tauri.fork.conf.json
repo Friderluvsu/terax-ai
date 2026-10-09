@@ -1,0 +1,12 @@
+{
+  "productName": "Terax Fork",
+  "identifier": "dev.terax.fork",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}
