@@ -1,5 +1,7 @@
 use futures_util::stream::{self, StreamExt};
 
+#[cfg(not(unix))]
+use super::FsError;
 use super::{join, EntryKind as RemoteKind, ReadOutcome, RemoteEntry, RemoteFs};
 use crate::modules::fs::file::{
     classify_bytes, FileStat, ReadResult, StatKind, FORCE_MAX_READ_BYTES, MAX_READ_BYTES,
