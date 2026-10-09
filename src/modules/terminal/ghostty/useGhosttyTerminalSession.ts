@@ -19,6 +19,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openPty, type PtySession } from "../lib/pty-bridge";
 import { writeTerminalClipboard } from "../lib/terminalClipboard";
 import { LatestClipboardWrite } from "@/modules/terminal/lib/LatestClipboardWrite";
+import { hostname } from "@tauri-apps/plugin-os";
+import { createOsc7HostFilter } from "@/modules/terminal/lib/osc-handlers";
 import { GhosttySemanticEventRouter } from "./core/GhosttySemanticEventRouter";
 import { PromptInputTracker } from "./core/PromptInputTracker";
 import { getGhosttyCoreRuntime } from "./GhosttyCoreRuntime";
@@ -29,6 +31,14 @@ import {
   rgbToInt,
   type TerminalFontSpec,
 } from "./gpu/terminalVisuals";
+
+let localHostname: string | null = null;
+void hostname()
+  .then((h) => {
+    localHostname = h;
+  })
+  .catch(() => {});
+
 import { getWebGpuTerminalRuntime } from "./gpu/WebGpuTerminalRuntime";
 import { WebGpuTerminalSurface } from "./gpu/WebGpuTerminalSurface";
 import {
@@ -646,24 +656,31 @@ async function initializeSessionGeneration(
   ]);
   if (!alive()) return;
 
-  const semanticEvents = new GhosttySemanticEventRouter({
-    onCwd: (cwd) => {
-      if (session.lastCwd === cwd) return;
-      session.lastCwd = cwd;
-      session.callbacks.onCwd?.(cwd);
-    },
-    onClipboard: (text) => {
-      oscClipboard.enqueue(text);
-    },
-    onOverflow: (dropped) => {
-      console.warn(
-        `[terax] Ghostty semantic event queue dropped ${dropped} event(s)`,
-      );
-    },
-    onCommandState: (running) => {
-      if (!running) mark("firstPromptMs");
-    },
+  const acceptHost = createOsc7HostFilter({
+    ssh: false,
+    getLocalHostname: () => localHostname,
   });
+  const semanticEvents = new GhosttySemanticEventRouter(
+    {
+      onCwd: (cwd) => {
+        if (session.lastCwd === cwd) return;
+        session.lastCwd = cwd;
+        session.callbacks.onCwd?.(cwd);
+      },
+      onClipboard: (text) => {
+        oscClipboard.enqueue(text);
+      },
+      onOverflow: (dropped) => {
+        console.warn(
+          `[terax] Ghostty semantic event queue dropped ${dropped} event(s)`,
+        );
+      },
+      onCommandState: (running) => {
+        if (!running) mark("firstPromptMs");
+      },
+    },
+    acceptHost,
+  );
   const model = await coreRuntime.createModel({
     leafId: session.leafId,
     backend: session.backend,
