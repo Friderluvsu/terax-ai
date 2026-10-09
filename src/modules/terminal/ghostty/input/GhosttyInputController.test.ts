@@ -488,6 +488,88 @@ describe("GhosttyInputController", () => {
   );
 });
 
+describe("GhosttyInputController Option handling", () => {
+  function setup(mode: "off" | "left" | "both") {
+    const input = new FakeTextArea();
+    const onData = vi.fn();
+    const encodeKey = vi.fn(() => new Uint8Array(0));
+    const controller = new GhosttyInputController({
+      model: { ...inputModel(), encodeKey },
+      input: input as unknown as HTMLTextAreaElement,
+      pointerTarget: new FakeElement() as unknown as HTMLElement,
+      cellSize: () => ({ width: 10, height: 20 }),
+      isMac: true,
+      optionAsMeta: () => mode,
+      onCopy: () => false,
+      onData,
+    });
+    const sent = () =>
+      onData.mock.calls.map((c) => new TextDecoder().decode(c[0]));
+    const press = (code: string) =>
+      input.dispatchEvent(
+        keyboardEvent({ key: "Alt", code, altKey: true }, "keydown"),
+      );
+    return { input, controller, sent, press };
+  }
+  const optionB = { key: "∫", code: "KeyB", altKey: true };
+  const optionF = { key: "ƒ", code: "KeyF", altKey: true };
+  const optionD = { key: "∂", code: "KeyD", altKey: true };
+
+  it.each([
+    ["left", "AltLeft", ["\x1bb", "\x1bf", "\x1bd"]],
+    ["both", "AltLeft", ["\x1bb", "\x1bf", "\x1bd"]],
+    ["both", "AltRight", ["\x1bb", "\x1bf", "\x1bd"]],
+    ["off", "AltLeft", ["∫", "ƒ", "∂"]],
+  ] as const)("Option+B/F/D in %s mode with %s", (mode, alt, expected) => {
+    const { input, controller, sent, press } = setup(mode);
+    press(alt);
+    for (const e of [optionB, optionF, optionD])
+      input.dispatchEvent(keyboardEvent(e));
+    expect(sent()).toEqual([...expected]);
+    controller.dispose();
+  });
+
+  it("types the character with the right Option in left mode", () => {
+    const { input, controller, sent, press } = setup("left");
+    press("AltRight");
+    input.dispatchEvent(keyboardEvent({ ...optionB }));
+    expect(sent()).toEqual(["∫"]);
+    controller.dispose();
+  });
+
+  it("handles word navigation sent with keyCode 229", () => {
+    const { input, controller, sent } = setup("off");
+    const event = keyboardEvent({
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      altKey: true,
+      keyCode: 229,
+    });
+    input.dispatchEvent(event);
+    expect(sent()).toEqual(["\x1bb"]);
+    expect(event.defaultPrevented).toBe(true);
+    controller.dispose();
+  });
+
+  it("ignores Option keys during IME composition", () => {
+    const { input, controller, sent } = setup("both");
+    input.dispatchEvent(
+      keyboardEvent({
+        key: "ArrowLeft",
+        code: "ArrowLeft",
+        altKey: true,
+        keyCode: 229,
+        isComposing: true,
+      }),
+    );
+    input.dispatchEvent(new Event("compositionstart"));
+    input.dispatchEvent(keyboardEvent({ ...optionB }));
+    expect(sent()).toEqual([]);
+    expect(controller.isComposing()).toBe(true);
+    controller.dispose();
+  });
+});
+
 function inputModel(
   mode: (value: number) => boolean = () => false,
 ): GhosttyTerminalModelApi {

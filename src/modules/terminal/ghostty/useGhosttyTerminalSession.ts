@@ -884,6 +884,7 @@ function createGhosttyInput(
     model,
     input: surface.inputElement(),
     pointerTarget: surface.eventTarget(),
+    optionAsMeta: () => usePreferencesStore.getState().terminalOptionAsMeta,
     cellSize: () => ({
       width: surface.cellSize().width,
       height: surface.cellSize().height,
