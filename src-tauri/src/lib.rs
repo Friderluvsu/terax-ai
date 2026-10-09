@@ -243,6 +243,7 @@ pub fn run() {
         .manage(lsp::LspState::default())
         .manage(fs::grep::ContentSearchState::default())
         .manage(preview::PreviewState::default())
+        .manage(remote::RemoteState::default())
         .manage({
             let registry = workspace::WorkspaceRegistry::default();
             workspace::bootstrap_registry(&registry);
@@ -341,6 +342,10 @@ pub fn run() {
             secrets::secrets_get_all,
             net::lm_ping,
             remote::ssh_list_hosts,
+            remote::ssh_check,
+            remote::ssh_disconnect,
+            remote::ssh_home,
+            remote::ssh_resolve,
             net::ai_http_request,
             net::ai_http_stream,
             history::history_suggest,
@@ -365,6 +370,9 @@ pub fn run() {
                     }
                     if let Some(state) = app.try_state::<control::ControlState>() {
                         state.shutdown();
+                    }
+                    if let Some(state) = app.try_state::<remote::RemoteState>() {
+                        state.shutdown(&app.config().identifier);
                     }
                 }
                 // macOS delivers "Open With" files here, not as argv (cold and
