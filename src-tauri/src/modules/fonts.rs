@@ -287,7 +287,8 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> FontIndex {
         let Ok(mut file) = fs::File::open(&path) else {
             continue;
         };
-        for m in read_faces(&mut file) {
+        // FontFace(ArrayBuffer) renders only the first face of a collection.
+        for m in read_faces(&mut file).into_iter().take(1) {
             faces.push(IndexedFace {
                 path: path.clone(),
                 family: m.family,
@@ -419,17 +420,28 @@ pub async fn font_read(
     id: u32,
 ) -> Result<tauri::ipc::Response, String> {
     let idx = index(&state).await?;
-    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let path = idx.path_for(id).ok_or("unknown font id")?;
-        let meta = fs::metadata(path).map_err(|e| e.to_string())?;
-        if meta.len() > MAX_FILE_BYTES {
-            return Err("font file too large".into());
-        }
-        fs::read(path).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let bytes = tauri::async_runtime::spawn_blocking(move || read_face_bytes(&idx, id))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Re-checks the indexed file at read time: a path swapped for a symlink or a
+/// non-font after indexing is refused, so only font bytes ever leave Rust.
+fn read_face_bytes(idx: &FontIndex, id: u32) -> Result<Vec<u8>, String> {
+    let path = idx.path_for(id).ok_or("unknown font id")?;
+    let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("font path is not a regular file".into());
+    }
+    if meta.len() > MAX_FILE_BYTES {
+        return Err("font file too large".into());
+    }
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    match bytes.get(0..4) {
+        Some([0, 1, 0, 0]) | Some(b"OTTO") | Some(b"true") | Some(b"ttcf") => Ok(bytes),
+        _ => Err("not a font file".into()),
+    }
 }
 
 #[cfg(test)]
@@ -635,5 +647,57 @@ mod tests {
         let id = idx.resolve("JetBrains Mono").unwrap().faces[0].id;
         assert!(idx.path_for(id).is_some());
         assert!(idx.path_for(9999).is_none());
+        assert!(read_face_bytes(&idx, 9999).is_err());
+        assert!(read_face_bytes(&idx, id).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn font_read_refuses_a_path_swapped_for_a_symlink_or_non_font() {
+        let dir = tempfile::tempdir().unwrap();
+        let idx = indexed(dir.path());
+        let id = idx.resolve("JetBrains Mono").unwrap().faces[0].id;
+        let path = idx.path_for(id).unwrap().to_path_buf();
+        let secret = dir.path().join("secret.txt");
+        fs::write(&secret, b"not a font").unwrap();
+
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&secret, &path).unwrap();
+        assert!(read_face_bytes(&idx, id).is_err());
+
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"plain text, no sfnt magic").unwrap();
+        assert!(read_face_bytes(&idx, id).is_err());
+    }
+
+    #[test]
+    fn indexes_only_the_first_face_of_a_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let regular = font("Coll Mono", "Regular", 400, false);
+        let bold = font("Coll Mono", "Bold", 700, false);
+        let mut ttc = b"ttcf".to_vec();
+        ttc.extend([0, 1, 0, 0]);
+        ttc.extend(2u32.to_be_bytes());
+        let first = 20u32;
+        let second = first + regular.len() as u32;
+        ttc.extend(first.to_be_bytes());
+        ttc.extend(second.to_be_bytes());
+        let rebase = |face: &[u8], base: u32| -> Vec<u8> {
+            let mut f = face.to_vec();
+            let n = u16::from_be_bytes([f[4], f[5]]) as usize;
+            for i in 0..n {
+                let at = 12 + i * 16 + 8;
+                let off = u32::from_be_bytes([f[at], f[at + 1], f[at + 2], f[at + 3]]) + base;
+                f[at..at + 4].copy_from_slice(&off.to_be_bytes());
+            }
+            f
+        };
+        ttc.extend(rebase(&regular, first));
+        ttc.extend(rebase(&bold, second));
+        fs::write(dir.path().join("coll.ttc"), &ttc).unwrap();
+        let idx = scan_dirs(&[dir.path().to_path_buf()]);
+        let faces = idx.resolve("Coll Mono").unwrap().faces;
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0].weight, 400);
     }
 }
