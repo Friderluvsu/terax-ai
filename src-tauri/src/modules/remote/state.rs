@@ -4,6 +4,8 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct RemoteState {
     socket_dir: Mutex<Option<PathBuf>>,
+    #[cfg(unix)]
+    sftp: super::fs::sftp::SftpPool,
 }
 
 impl RemoteState {
@@ -27,7 +29,22 @@ impl RemoteState {
         Ok(dir)
     }
 
+    #[cfg(unix)]
+    pub fn sftp(&self, identifier: &str, host: &str) -> Result<super::fs::sftp::SftpHost, String> {
+        super::target::validate_alias(host)?;
+        let dir = self.socket_dir(identifier)?;
+        self.sftp
+            .host(host, || super::fs::sftp::ssh_launch(&dir, host))
+    }
+
+    #[cfg(unix)]
+    pub fn sftp_disconnect(&self, host: &str) {
+        self.sftp.disconnect(host);
+    }
+
     pub fn shutdown(&self, identifier: &str) {
+        #[cfg(unix)]
+        self.sftp.shutdown();
         #[cfg(unix)]
         if let Ok(dir) = self.dir_path(identifier) {
             super::control::exit_all(&dir);
