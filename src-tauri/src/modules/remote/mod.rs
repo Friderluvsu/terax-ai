@@ -7,6 +7,8 @@ mod fail_closed_tests;
 pub mod fs;
 pub mod quote;
 pub mod registry;
+#[cfg(unix)]
+pub mod search;
 pub mod shell_init;
 pub mod ssh_config;
 pub mod state;
