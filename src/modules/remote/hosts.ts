@@ -18,6 +18,13 @@ export function buildSshCommand(alias: string): string | null {
   return `ssh -- '${alias}'\r`;
 }
 
+export function sshSpaceInput(
+  alias: string,
+): { name: string; env: { kind: "ssh"; host: string } } | null {
+  if (!isValidSshAlias(alias)) return null;
+  return { name: alias, env: { kind: "ssh", host: alias } };
+}
+
 export function sshHostDetail(host: SshHost): string {
   const target = host.hostname ?? host.alias;
   const withUser = host.user ? `${host.user}@${target}` : target;
