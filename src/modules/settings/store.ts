@@ -185,7 +185,19 @@ export type Preferences = {
   editorCustomFormatCommand: string;
   lspActivation: Record<string, LspActivation>;
   lspCustomServers: LspCustomServer[];
+  terminalDefaultMode: TerminalDefaultMode;
+  terminalClickToMoveCursor: boolean;
+  terminalOptionAsMeta: TerminalOptionAsMeta;
+  terminalCopyOnSelect: boolean;
+  sshRemoteShellIntegration: boolean;
+  aiRemoteToolsReadOnly: boolean;
+  /** Seconds a command must run before a completion notification; 0 disables. */
+  notifyLongCommandsSeconds: number;
 };
+
+export type TerminalDefaultMode = "classic" | "blocks";
+
+export type TerminalOptionAsMeta = "off" | "left" | "both";
 
 export type EditorFormatter =
   | "lsp"
@@ -279,6 +291,13 @@ const KEY_EDITOR_FORMATTER_BY_LANG = "editorFormatterByLang";
 const KEY_EDITOR_CUSTOM_FORMAT_COMMAND = "editorCustomFormatCommand";
 const KEY_LSP_ACTIVATION = "lspActivation";
 const KEY_LSP_CUSTOM_SERVERS = "lspCustomServers";
+const KEY_TERMINAL_DEFAULT_MODE = "terminalDefaultMode";
+const KEY_TERMINAL_CLICK_TO_MOVE_CURSOR = "terminalClickToMoveCursor";
+const KEY_TERMINAL_OPTION_AS_META = "terminalOptionAsMeta";
+const KEY_TERMINAL_COPY_ON_SELECT = "terminalCopyOnSelect";
+const KEY_SSH_REMOTE_SHELL_INTEGRATION = "sshRemoteShellIntegration";
+const KEY_AI_REMOTE_TOOLS_READ_ONLY = "aiRemoteToolsReadOnly";
+const KEY_NOTIFY_LONG_COMMANDS_SECONDS = "notifyLongCommandsSeconds";
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
 export const TERMINAL_FONT_SIZE_MIN = 8;
@@ -371,6 +390,13 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorCustomFormatCommand: "",
   lspActivation: {},
   lspCustomServers: [],
+  terminalDefaultMode: "classic",
+  terminalClickToMoveCursor: true,
+  terminalOptionAsMeta: "off",
+  terminalCopyOnSelect: false,
+  sshRemoteShellIntegration: true,
+  aiRemoteToolsReadOnly: true,
+  notifyLongCommandsSeconds: 0,
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
@@ -576,7 +602,101 @@ export async function loadPreferences(): Promise<Preferences> {
     lspCustomServers:
       get<LspCustomServer[]>(KEY_LSP_CUSTOM_SERVERS) ??
       DEFAULT_PREFERENCES.lspCustomServers,
+    terminalDefaultMode: coerceTerminalDefaultMode(
+      get<unknown>(KEY_TERMINAL_DEFAULT_MODE),
+    ),
+    terminalClickToMoveCursor: coerceBool(
+      get<unknown>(KEY_TERMINAL_CLICK_TO_MOVE_CURSOR),
+      DEFAULT_PREFERENCES.terminalClickToMoveCursor,
+    ),
+    terminalOptionAsMeta: coerceTerminalOptionAsMeta(
+      get<unknown>(KEY_TERMINAL_OPTION_AS_META),
+    ),
+    terminalCopyOnSelect: coerceBool(
+      get<unknown>(KEY_TERMINAL_COPY_ON_SELECT),
+      DEFAULT_PREFERENCES.terminalCopyOnSelect,
+    ),
+    sshRemoteShellIntegration: coerceBool(
+      get<unknown>(KEY_SSH_REMOTE_SHELL_INTEGRATION),
+      DEFAULT_PREFERENCES.sshRemoteShellIntegration,
+    ),
+    aiRemoteToolsReadOnly: coerceBool(
+      get<unknown>(KEY_AI_REMOTE_TOOLS_READ_ONLY),
+      DEFAULT_PREFERENCES.aiRemoteToolsReadOnly,
+    ),
+    notifyLongCommandsSeconds: clampNotifySeconds(
+      get<unknown>(KEY_NOTIFY_LONG_COMMANDS_SECONDS),
+    ),
   };
+}
+
+function coerceBool(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function coerceTerminalDefaultMode(value: unknown): TerminalDefaultMode {
+  return value === "classic" || value === "blocks"
+    ? value
+    : DEFAULT_PREFERENCES.terminalDefaultMode;
+}
+
+export function coerceTerminalOptionAsMeta(
+  value: unknown,
+): TerminalOptionAsMeta {
+  return value === "off" || value === "left" || value === "both"
+    ? value
+    : DEFAULT_PREFERENCES.terminalOptionAsMeta;
+}
+
+export const NOTIFY_LONG_COMMANDS_MAX_SECONDS = 86_400;
+
+export function clampNotifySeconds(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(
+    NOTIFY_LONG_COMMANDS_MAX_SECONDS,
+    Math.max(0, Math.round(value)),
+  );
+}
+
+export async function setTerminalDefaultMode(
+  value: TerminalDefaultMode,
+): Promise<void> {
+  await writePref(KEY_TERMINAL_DEFAULT_MODE, coerceTerminalDefaultMode(value));
+}
+
+export async function setTerminalClickToMoveCursor(
+  value: boolean,
+): Promise<void> {
+  await writePref(KEY_TERMINAL_CLICK_TO_MOVE_CURSOR, coerceBool(value, true));
+}
+
+export async function setTerminalOptionAsMeta(
+  value: TerminalOptionAsMeta,
+): Promise<void> {
+  await writePref(
+    KEY_TERMINAL_OPTION_AS_META,
+    coerceTerminalOptionAsMeta(value),
+  );
+}
+
+export async function setTerminalCopyOnSelect(value: boolean): Promise<void> {
+  await writePref(KEY_TERMINAL_COPY_ON_SELECT, coerceBool(value, false));
+}
+
+export async function setSshRemoteShellIntegration(
+  value: boolean,
+): Promise<void> {
+  await writePref(KEY_SSH_REMOTE_SHELL_INTEGRATION, coerceBool(value, true));
+}
+
+export async function setAiRemoteToolsReadOnly(value: boolean): Promise<void> {
+  await writePref(KEY_AI_REMOTE_TOOLS_READ_ONLY, coerceBool(value, true));
+}
+
+export async function setNotifyLongCommandsSeconds(
+  value: number,
+): Promise<void> {
+  await writePref(KEY_NOTIFY_LONG_COMMANDS_SECONDS, clampNotifySeconds(value));
 }
 
 export async function setLspActivation(
@@ -1025,6 +1145,13 @@ export async function onPreferencesChange(
     [KEY_EDITOR_CUSTOM_FORMAT_COMMAND]: "editorCustomFormatCommand",
     [KEY_LSP_ACTIVATION]: "lspActivation",
     [KEY_LSP_CUSTOM_SERVERS]: "lspCustomServers",
+    [KEY_TERMINAL_DEFAULT_MODE]: "terminalDefaultMode",
+    [KEY_TERMINAL_CLICK_TO_MOVE_CURSOR]: "terminalClickToMoveCursor",
+    [KEY_TERMINAL_OPTION_AS_META]: "terminalOptionAsMeta",
+    [KEY_TERMINAL_COPY_ON_SELECT]: "terminalCopyOnSelect",
+    [KEY_SSH_REMOTE_SHELL_INTEGRATION]: "sshRemoteShellIntegration",
+    [KEY_AI_REMOTE_TOOLS_READ_ONLY]: "aiRemoteToolsReadOnly",
+    [KEY_NOTIFY_LONG_COMMANDS_SECONDS]: "notifyLongCommandsSeconds",
   };
   // Same-process writes still fire onChange immediately; cross-window writes
   // arrive via the Tauri event emitted by writePref().
