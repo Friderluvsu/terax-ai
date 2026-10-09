@@ -53,7 +53,7 @@ Setup:
 2. \`git switch -c task/${t.id} fork/main\` (fork/main is the integration branch).
 3. ${cargo(t)}
 Your task card: run \`sed -n '/^#### ${t.id} /,/^#### /p' fork-plan/PLAN.md\` and implement exactly that card. Section 3 of fork-plan/PLAN.md has the gates; the epic header above the card names the scouting report in fork-plan/scouts/ with file:line evidence. Read only what you need; verify line numbers in the code before editing.
-${t.note ? `Integrator note: ${t.note}\n` : ''}Rules: follow TERAX.md and FORK.md (already in your context). Stay inside the card's scope. No em-dash, no emojis, minimal comments, '@/' imports. Format only files you touched.
+${t.note ? `Integrator note: ${t.note}\n` : ''}Rules: follow TERAX.md and FORK.md (already in your context). Stay inside the card's scope. No em-dash, no emojis, minimal comments, '@/' imports. Format only files you touched: \`rustfmt <file>\` and \`pnpm exec biome format --write <file>\`; NEVER run \`cargo fmt\`, \`npx prettier\` or a formatter on directories. Before committing run \`git status --short\` and commit only files your card needs (no backup files such as *-E or *.orig, no unrelated formatting).
 Finish:
 - Run the gates the card lists. Lint must stay at 0 errors and at most 90 warnings. If a gate fails because of a pre-existing issue unrelated to your change, say so explicitly in gates.
 - Commit everything in one commit titled "${t.id}: <short title>" whose message ends with the line: ${TRAILER}
