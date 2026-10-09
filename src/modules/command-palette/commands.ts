@@ -1,5 +1,6 @@
 import type { SearchTarget } from "@/modules/header";
 import { MAX_PANES_PER_TAB, type Tab } from "@/modules/tabs";
+import { sshHostDetail, type SshHost } from "@/modules/remote";
 import { leafIds } from "@/modules/terminal";
 import {
   Cancel01Icon,
@@ -42,6 +43,8 @@ export type CommandPaletteActionContext = {
   openNewTab: () => void;
   openNewBlock: () => void;
   openNewPrivate: () => void;
+  sshHosts: SshHost[];
+  openSsh: (alias: string) => void;
   openNewEditor: () => void;
   openNewPreview: () => void;
   openGitGraph: () => void;
@@ -114,7 +117,14 @@ export function createCommandItems(
       id: "spaces.overview",
       title: "Spaces: Overview",
       group: "Spaces",
-      keywords: ["spaces", "sessions", "overview", "organize", "manage", "move"],
+      keywords: [
+        "spaces",
+        "sessions",
+        "overview",
+        "organize",
+        "manage",
+        "move",
+      ],
       icon: DashboardSquare01Icon,
       run: ctx.openSpacesOverview,
     },
@@ -132,8 +142,7 @@ export function createCommandItems(
       group: "Spaces" as const,
       keywords: ["space", "switch", "session", sp.name],
       icon: DashboardSquare01Icon,
-      disabledReason:
-        sp.id === ctx.activeSpaceId ? "Current space" : undefined,
+      disabledReason: sp.id === ctx.activeSpaceId ? "Current space" : undefined,
       run: () => ctx.switchSpace(sp.id),
     })),
     {
@@ -162,6 +171,17 @@ export function createCommandItems(
       shortcutId: "tab.newPrivate",
       run: ctx.openNewPrivate,
     },
+    ...ctx.sshHosts.map((host) => ({
+      id: `ssh.connect.${host.alias}`,
+      title: `SSH: ${host.alias}`,
+      group: "Tabs" as const,
+      keywords: ["ssh", "remote", "connect", host.hostname ?? ""].filter(
+        Boolean,
+      ),
+      icon: TerminalIcon,
+      trailing: sshHostDetail(host),
+      run: () => ctx.openSsh(host.alias),
+    })),
     {
       id: "tab.newEditor",
       title: "New editor tab",

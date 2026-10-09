@@ -3,6 +3,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -13,6 +16,7 @@ import {
 import { fmtShortcut, MOD_KEY, SHIFT_KEY } from "@/lib/platform";
 import { AgentLauncherPanel } from "@/modules/agents/components/AgentLauncherPanel";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
+import { useSshHosts } from "@/modules/remote";
 import {
   AiBrowserIcon,
   ArrowRight01Icon,
@@ -33,6 +37,7 @@ type Props = {
   onNewPreview: () => void;
   onNewEditor: () => void;
   onNewGitGraph: () => void;
+  onNewSsh: (alias: string) => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
 };
 
@@ -43,9 +48,11 @@ export function NewTabMenu({
   onNewPreview,
   onNewEditor,
   onNewGitGraph,
+  onNewSsh,
   onLaunchAgents,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const sshHosts = useSshHosts(menuOpen);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const openLauncherAfterMenuClose = useRef(false);
   const openMenuAfterLauncherClose = useRef(false);
@@ -170,6 +177,28 @@ export function NewTabMenu({
                 />
                 <span className="flex-1">Git Graph</span>
               </DropdownMenuItem>
+              {sshHosts.length > 0 && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <HugeiconsIcon
+                      icon={ComputerTerminal02Icon}
+                      size={14}
+                      strokeWidth={1.75}
+                    />
+                    <span className="flex-1">SSH</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-h-72 min-w-40 overflow-y-auto">
+                    {sshHosts.map((host) => (
+                      <DropdownMenuItem
+                        key={host.alias}
+                        onSelect={() => onNewSsh(host.alias)}
+                      >
+                        {host.alias}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </span>
