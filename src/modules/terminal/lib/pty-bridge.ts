@@ -2,6 +2,7 @@ import {
   clearAgentActivity,
   ensureAgentActivityListener,
 } from "@/modules/terminal/lib/agentActivity";
+import { sshGate, type SshLease } from "@/modules/remote/connection";
 import { currentWorkspaceEnv, type WorkspaceEnv } from "@/modules/workspace";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -45,6 +46,9 @@ export async function openPty(
   remoteShellIntegration?: boolean,
 ): Promise<PtySession> {
   // Raw bytes preserve split UTF-8 and escape sequences across IPC.
+  const workspace = env ?? currentWorkspaceEnv();
+  const lease: SshLease | null =
+    workspace?.kind === "ssh" ? await sshGate.enter(workspace.host) : null;
   const onData = new Channel<ArrayBuffer>();
   const onExit = new Channel<number>();
 
@@ -81,6 +85,7 @@ export async function openPty(
   const releaseHandlers = () => {
     if (released) return;
     released = true;
+    lease?.release();
     receiver.dispose();
     if (id !== null) {
       receivers.delete(id);
@@ -106,7 +111,7 @@ export async function openPty(
       cols,
       rows,
       cwd: cwd ?? null,
-      workspace: env ?? currentWorkspaceEnv(),
+      workspace,
       blocks: blocks ?? false,
       shell: shell ?? null,
       paneId: paneId ?? null,

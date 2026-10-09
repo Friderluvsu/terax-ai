@@ -38,6 +38,7 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onNewSsh: (alias: string) => void;
+  onConnectSsh: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
 };
 
@@ -49,6 +50,7 @@ export function NewTabMenu({
   onNewEditor,
   onNewGitGraph,
   onNewSsh,
+  onConnectSsh,
   onLaunchAgents,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -176,6 +178,14 @@ export function NewTabMenu({
                   strokeWidth={1.75}
                 />
                 <span className="flex-1">Git Graph</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onConnectSsh}>
+                <HugeiconsIcon
+                  icon={ComputerTerminal02Icon}
+                  size={14}
+                  strokeWidth={1.75}
+                />
+                <span className="flex-1">Connect to SSH host...</span>
               </DropdownMenuItem>
               {sshHosts.length > 0 && (
                 <DropdownMenuSub>

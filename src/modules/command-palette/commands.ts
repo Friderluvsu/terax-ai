@@ -46,6 +46,7 @@ export type CommandPaletteActionContext = {
   sshHosts: SshHost[];
   openSsh: (alias: string) => void;
   openSshSpace: (alias: string) => void;
+  openSshConnect: () => void;
   openNewEditor: () => void;
   openNewPreview: () => void;
   openGitGraph: () => void;
@@ -171,6 +172,14 @@ export function createCommandItems(
       icon: IncognitoIcon,
       shortcutId: "tab.newPrivate",
       run: ctx.openNewPrivate,
+    },
+    {
+      id: "ssh.connectDialog",
+      title: "Connect to SSH host...",
+      group: "Tabs",
+      keywords: ["ssh", "remote", "connect", "host"],
+      icon: TerminalIcon,
+      run: ctx.openSshConnect,
     },
     ...ctx.sshHosts.map((host) => ({
       id: `ssh.connect.${host.alias}`,

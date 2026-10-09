@@ -1,4 +1,10 @@
 export {
+  sshGate,
+  useSshConnections,
+  type SshConnState,
+  type SshLease,
+} from "./connection";
+export {
   buildSshCommand,
   isValidSshAlias,
   listSshHosts,

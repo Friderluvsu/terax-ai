@@ -31,6 +31,7 @@ type Props = {
   onNewSpace: () => void;
   onDeleteSpace: (id: string) => void;
   onNewTabInSpace: (spaceId: string) => void;
+  onConnectSsh?: () => void;
   onJumpTab: (id: number) => void;
   onCloseTab: (id: number) => void;
   onMoveTabToSpace: (tabId: number, spaceId: string) => void;
@@ -78,6 +79,7 @@ export function SpaceSwitcher({
   onNewSpace,
   onDeleteSpace,
   onNewTabInSpace,
+  onConnectSsh,
   onJumpTab,
   onCloseTab,
   onMoveTabToSpace,
@@ -189,13 +191,15 @@ export function SpaceSwitcher({
       return;
     }
     const rect = hit.getBoundingClientRect();
-    const edge: Edge = e.clientY < rect.top + rect.height / 2 ? "top" : "bottom";
+    const edge: Edge =
+      e.clientY < rect.top + rect.height / 2 ? "top" : "bottom";
     const kind = hit.getAttribute("data-drop");
     let next: DropTarget | null = null;
     if (st.kind === "space") {
       if (kind === "space") {
         const spaceId = hit.getAttribute("data-space-id");
-        if (spaceId && spaceId !== st.id) next = { kind: "space", spaceId, edge };
+        if (spaceId && spaceId !== st.id)
+          next = { kind: "space", spaceId, edge };
       }
     } else if (kind === "tab") {
       const tabId = Number(hit.getAttribute("data-tab-id"));
@@ -307,6 +311,19 @@ export function SpaceSwitcher({
             <HugeiconsIcon icon={PlusSignIcon} size={14} strokeWidth={1.75} />
             <span className="flex-1">New space</span>
           </button>
+          {onConnectSsh ? (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenChange(false);
+                onConnectSsh();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <HugeiconsIcon icon={PlusSignIcon} size={14} strokeWidth={1.75} />
+              <span className="flex-1">Connect to SSH host...</span>
+            </button>
+          ) : null}
         </div>
       </PopoverContent>
       {overlay &&
@@ -396,7 +413,9 @@ function SpaceRow({
         data-space-id={space.id}
         role="button"
         tabIndex={editing ? -1 : 0}
-        onPointerDown={editing ? undefined : (e) => onPointerDown(e, "space", space.id)}
+        onPointerDown={
+          editing ? undefined : (e) => onPointerDown(e, "space", space.id)
+        }
         onPointerMove={onPointerMove}
         onPointerUp={editing ? undefined : (e) => onPointerUp(e, onSwitch)}
         onPointerCancel={(e) => onPointerUp(e)}
@@ -459,7 +478,11 @@ function SpaceRow({
                 label="Rename space"
                 onClick={onStartRename}
               />
-              <RowAction icon={PlusSignIcon} label="New tab" onClick={onNewTab} />
+              <RowAction
+                icon={PlusSignIcon}
+                label="New tab"
+                onClick={onNewTab}
+              />
               {canDelete && (
                 <RowAction
                   icon={Delete02Icon}

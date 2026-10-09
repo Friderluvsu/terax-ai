@@ -52,7 +52,12 @@ import {
 } from "@/modules/header";
 import { setLspNavigator } from "@/modules/lsp";
 import type { PreviewPaneHandle } from "@/modules/preview";
-import { buildSshCommand, sshSpaceInput, useSshHosts } from "@/modules/remote";
+import {
+  buildSshCommand,
+  sshSpaceInput,
+  useSshConnections,
+  useSshHosts,
+} from "@/modules/remote";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setShowHidden } from "@/modules/settings/store";
@@ -126,6 +131,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -148,6 +155,8 @@ import {
 } from "./hooks/tabCloseGuards";
 import { useTabCloseGuards } from "./hooks/useTabCloseGuards";
 import { useWorkspaceSwitcher } from "./hooks/useWorkspaceSwitcher";
+
+const SshConnectDialog = lazy(() => import("@/modules/remote/ConnectDialog"));
 
 export default function App() {
   const {
@@ -340,6 +349,8 @@ export default function App() {
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const sshHosts = useSshHosts(commandPaletteOpen);
+  const [sshConnectOpen, setSshConnectOpen] = useState(false);
+  const openSshConnect = useCallback(() => setSshConnectOpen(true), []);
   const [paletteInitialMode, setPaletteInitialMode] = useState<
     "commands" | "content"
   >("commands");
@@ -1348,17 +1359,31 @@ export default function App() {
   }, [activeCwd, home, workspaceEnv, newTab, setActiveSpaceForNewTabs]);
 
   const openSshSpace = useCallback(
-    (alias: string) => {
+    (alias: string, path: string | null = null) => {
       const input = sshSpaceInput(alias);
       if (!input) return;
       const { create, setActive } = useSpaces.getState();
-      const meta = create({ ...input, root: null });
+      const meta = create({ ...input, root: path });
       setActiveSpaceForNewTabs(meta.id);
-      newTab();
+      newTab(path ?? undefined);
       setActive(meta.id);
     },
     [newTab, setActiveSpaceForNewTabs],
   );
+
+  const sshHost = workspaceEnv.kind === "ssh" ? workspaceEnv.host : null;
+  const sshStatus = useSshConnections((s) =>
+    sshHost ? (s.status[sshHost] ?? "connecting") : null,
+  );
+  const sshConnected = sshStatus === "connected";
+
+  const reconnectSsh = useCallback(() => {
+    newTab(inheritedCwdForNewTab());
+  }, [newTab, inheritedCwdForNewTab]);
+
+  useEffect(() => {
+    if (sshConnected) void adoptWorkspaceEnv(workspaceEnv);
+  }, [sshConnected, workspaceEnv, adoptWorkspaceEnv]);
 
   const handleDeleteSpace = useCallback(
     (id: string) => {
@@ -1420,6 +1445,7 @@ export default function App() {
       onNewSpace={() => void handleNewSpace()}
       onDeleteSpace={handleDeleteSpace}
       onNewTabInSpace={handleNewTabInSpace}
+      onConnectSsh={openSshConnect}
       onJumpTab={jumpToTab}
       onCloseTab={handleClose}
       onMoveTabToSpace={handleMoveTab}
@@ -1443,6 +1469,7 @@ export default function App() {
             sshHosts,
             openSsh: openSshTab,
             openSshSpace,
+            openSshConnect,
             openNewEditor: () => setNewEditorOpen(true),
             openNewPreview: () => openPreviewTab(""),
             openGitGraph: openGitGraphFromContext,
@@ -1478,6 +1505,7 @@ export default function App() {
       sshHosts,
       openSshTab,
       openSshSpace,
+      openSshConnect,
       openPreviewTab,
       openGitGraphFromContext,
       toggleSourceControl,
@@ -1590,6 +1618,7 @@ export default function App() {
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
               onNewSsh={openSshTab}
+              onConnectSsh={openSshConnect}
               onLaunchAgents={launchAgentGroup}
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}
@@ -1640,7 +1669,14 @@ export default function App() {
                       key={sidebarView}
                       className="min-h-0 flex-1 terax-panel-in"
                     >
-                      {sidebarView === "explorer" ? (
+                      {sidebarView === "explorer" &&
+                      sshHost &&
+                      !sshConnected ? (
+                        <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                          Sign in to {sshHost} in the terminal. The file tree
+                          loads once the connection is ready.
+                        </div>
+                      ) : sidebarView === "explorer" ? (
                         <FileExplorer
                           ref={explorerRef}
                           rootPath={explorerRoot}
@@ -1743,6 +1779,8 @@ export default function App() {
               home={home}
               onCd={sendCd}
               onWorkspaceChange={handleWorkspaceChange}
+              sshHost={sshHost}
+              onReconnectSsh={reconnectSsh}
               onOpenMini={openMini}
               onOpenAi={togglePanelAndFocus}
               hasComposer={hasComposer}
@@ -1753,6 +1791,16 @@ export default function App() {
           )}
 
           <WindowVibrancyBridge />
+
+          {sshConnectOpen ? (
+            <Suspense fallback={null}>
+              <SshConnectDialog
+                open
+                onOpenChange={setSshConnectOpen}
+                onConnect={openSshSpace}
+              />
+            </Suspense>
+          ) : null}
 
           <AgentNotificationsBridge
             tabs={tabs}

@@ -66,6 +66,7 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onNewSsh: (alias: string) => void;
+  onConnectSsh: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
   onClose: (id: number) => void;
   /** Chrome-style: close every tab to the right of the given tab. */
@@ -93,6 +94,7 @@ export function TabBar({
   onNewEditor,
   onNewGitGraph,
   onNewSsh,
+  onConnectSsh,
   onLaunchAgents,
   onClose,
   onCloseTabsToRight,
@@ -596,6 +598,7 @@ export function TabBar({
           onNewEditor={onNewEditor}
           onNewGitGraph={onNewGitGraph}
           onNewSsh={onNewSsh}
+          onConnectSsh={onConnectSsh}
           onLaunchAgents={onLaunchAgents}
         />
       </div>
