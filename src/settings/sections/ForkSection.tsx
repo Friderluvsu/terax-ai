@@ -10,6 +10,7 @@ import { usePreferencesStore } from "@/modules/settings/preferences";
 import { Switch } from "@/components/ui/switch";
 import {
   clampNotifySeconds,
+  setAiRemoteToolsReadOnly,
   setNotifyLongCommandsSeconds,
   setTerminalClickToMoveCursor,
   setLaunchCommandFiles,
@@ -35,6 +36,7 @@ export function ForkSection() {
     (s) => s.terminalClickToMoveCursor,
   );
 
+  const aiRemoteReadOnly = usePreferencesStore((s) => s.aiRemoteToolsReadOnly);
   const notifySeconds = usePreferencesStore((s) => s.notifyLongCommandsSeconds);
   const remoteShellIntegration = usePreferencesStore(
     (s) => s.sshRemoteShellIntegration,
@@ -126,6 +128,15 @@ export function ForkSection() {
           <Switch
             checked={remoteShellIntegration}
             onCheckedChange={(v) => void setSshRemoteShellIntegration(v)}
+          />
+        </SettingRow>
+        <SettingRow
+          title="AI read-only on remote workspaces"
+          description="In an SSH workspace the AI can read, list and search files but cannot write or edit them. Commands are never available there."
+        >
+          <Switch
+            checked={aiRemoteReadOnly}
+            onCheckedChange={(v) => void setAiRemoteToolsReadOnly(v)}
           />
         </SettingRow>
         <SettingRow

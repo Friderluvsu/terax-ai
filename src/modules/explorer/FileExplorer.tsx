@@ -50,6 +50,7 @@ import { useGitStatus } from "./lib/useGitStatus";
 import type { GitStatusCode } from "./lib/gitStatusUtils";
 import { useGlobalShortcuts } from "@/modules/shortcuts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
+import { envCaps, useWorkspaceEnvStore } from "@/modules/workspace";
 import type { GitStatusSnapshot } from "@/modules/ai/lib/native";
 import type { TerminalPathDropTarget } from "@/modules/terminal";
 import { isRunnableScriptPath } from "@/modules/terminal/lib/runScript";
@@ -229,7 +230,10 @@ export const FileExplorer = memo(
       onPathsDeleted,
       canReplacePath,
     });
-    const gitDecorations = usePreferencesStore((s) => s.explorerGitDecorations);
+    const caps = envCaps(useWorkspaceEnvStore((s) => s.env));
+    const gitDecorations =
+      usePreferencesStore((s) => s.explorerGitDecorations) &&
+      caps.gitDecorations;
     const { lookup: lookupGitStatus } = useGitStatus(
       rootPath,
       gitDecorations ? gitStatus : null,
@@ -875,12 +879,14 @@ export const FileExplorer = memo(
                       Open Git History
                     </ContextMenuItem>
                   )}
-                  <ContextMenuItem
-                    className={COMPACT_ITEM}
-                    onSelect={() => void revealInFinder(menuTarget.path)}
-                  >
-                    Reveal in Finder
-                  </ContextMenuItem>
+                  {caps.reveal && (
+                    <ContextMenuItem
+                      className={COMPACT_ITEM}
+                      onSelect={() => void revealInFinder(menuTarget.path)}
+                    >
+                      Reveal in Finder
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={COMPACT_ITEM}
@@ -976,12 +982,14 @@ export const FileExplorer = memo(
                       Open Git History
                     </ContextMenuItem>
                   )}
-                  <ContextMenuItem
-                    className={COMPACT_ITEM}
-                    onSelect={() => void revealInFinder(rootPath)}
-                  >
-                    Reveal in Finder
-                  </ContextMenuItem>
+                  {caps.reveal && (
+                    <ContextMenuItem
+                      className={COMPACT_ITEM}
+                      onSelect={() => void revealInFinder(rootPath)}
+                    >
+                      Reveal in Finder
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={COMPACT_ITEM}

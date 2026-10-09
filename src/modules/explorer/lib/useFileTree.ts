@@ -7,6 +7,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import {
+  envCaps,
   fsEventInEnv,
   fsFor,
   parseWorkspaceScopeKey,
@@ -111,7 +112,11 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const workspaceKey = workspaceScopeKey(workspace);
   const showHidden = usePreferencesStore((s) => s.showHidden);
   const showHiddenRef = useRef(showHidden);
-  const gitDecorations = usePreferencesStore((s) => s.explorerGitDecorations);
+  const gitDecorationsPref = usePreferencesStore(
+    (s) => s.explorerGitDecorations,
+  );
+  const gitDecorations =
+    gitDecorationsPref && envCaps(workspace).gitDecorations;
   const gitDecorationsRef = useRef(gitDecorations);
   const [nodes, setNodes] = useState<TreeState>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

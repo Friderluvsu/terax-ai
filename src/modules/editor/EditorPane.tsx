@@ -57,7 +57,7 @@ import { detectIndentUnit } from "./lib/indent";
 import { type LanguageResult, resolveLanguage } from "./lib/languageResolver";
 import { FORCE_READ_LIMIT, useDocument } from "./lib/useDocument";
 import { useEditorThemeExt } from "./lib/useEditorThemeExt";
-import type { WorkspaceEnv } from "@/modules/workspace";
+import { envCaps, type WorkspaceEnv } from "@/modules/workspace";
 import { initVimGlobals, vimHandlersExtension } from "./lib/vim";
 
 initVimGlobals();
@@ -196,7 +196,9 @@ export const EditorPane = memo(
       const view = cmRef.current?.view;
       const prefs = usePreferencesStore.getState();
       const formatter = resolveFormatter(languageRef.current, prefs);
-      if (prefs.editorFormatOnSave && formatter === "lsp" && view) {
+      const formatOnSave =
+        prefs.editorFormatOnSave && envCaps(envRef.current).formatOnSave;
+      if (formatOnSave && formatter === "lsp" && view) {
         if (lspActiveRef.current) {
           let res: "done" | "unsupported" = "done";
           try {
@@ -226,7 +228,7 @@ export const EditorPane = memo(
       const docAtSave = view?.state.doc;
       const saved = await saveRef.current();
       if (!saved) return;
-      if (prefs.editorFormatOnSave && formatter !== "lsp") {
+      if (formatOnSave && formatter !== "lsp") {
         const error = await runExternalFormatter(
           formatter,
           pathRef.current,
@@ -587,6 +589,17 @@ export const EditorPane = memo(
       const isVideo = ["mp4", "webm", "ogg", "mov"].includes(ext);
       const isAudio = ["mp3", "wav", "flac", "aac", "m4a"].includes(ext);
       const isPdf = ext === "pdf";
+
+      if (
+        (isImage || isVideo || isAudio || isPdf) &&
+        !envCaps(env).mediaPreview
+      ) {
+        return (
+          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
+            Media preview is not available in this workspace.
+          </div>
+        );
+      }
 
       if (isImage || isVideo || isAudio || isPdf) {
         const assetUrl = convertFileSrc(path);
