@@ -20,7 +20,10 @@ export type GhosttySemanticEventCallbacks = {
 export class GhosttySemanticEventRouter {
   private inCommand = false;
 
-  constructor(private readonly callbacks: GhosttySemanticEventCallbacks) {}
+  constructor(
+    private readonly callbacks: GhosttySemanticEventCallbacks,
+    private readonly acceptHost: (host: string) => boolean = () => true,
+  ) {}
 
   handle(event: GhosttyTerminalEvent): void {
     switch (event.type) {
@@ -32,8 +35,9 @@ export class GhosttySemanticEventRouter {
         break;
       case "pwd": {
         if (this.inCommand) break;
-        const cwd = parseOsc7(event.uri);
-        if (cwd) this.callbacks.onCwd?.(cwd);
+        const osc7 = parseOsc7(event.uri);
+        if (osc7 && this.acceptHost(osc7.host))
+          this.callbacks.onCwd?.(osc7.path);
         break;
       }
       case "clipboard": {

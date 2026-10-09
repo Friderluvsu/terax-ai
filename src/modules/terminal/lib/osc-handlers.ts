@@ -2,10 +2,16 @@ import { IS_WINDOWS } from "@/lib/platform";
 
 const MAX_OSC52_CLIPBOARD_BYTES = 1024 * 1024;
 
-export function parseOsc7(data: string): string | null {
-  const m = data.match(/^file:\/\/[^/]*(\/.*)$/);
+export type Osc7 = { host: string; path: string };
+
+export function parseOsc7(data: string): Osc7 | null {
+  const m = data.match(/^file:\/\/([^/]*)(\/.*)$/);
   if (!m) return null;
-  let path = m[1];
+  let host = m[1];
+  try {
+    host = decodeURIComponent(host);
+  } catch {}
+  let path = m[2];
   try {
     path = decodeURIComponent(path);
   } catch {}
@@ -17,7 +23,37 @@ export function parseOsc7(data: string): string | null {
     const drive = path.match(/^\/([A-Za-z])(\/.*)?$/);
     if (drive) path = `${drive[1].toUpperCase()}:${drive[2] ?? "/"}`;
   }
-  return path;
+  return { host, path };
+}
+
+function normalizeHost(host: string): string {
+  return host.toLowerCase().replace(/\.local$/, "");
+}
+
+export function isLocalOsc7Host(
+  host: string,
+  localHostname: string | null,
+): boolean {
+  if (host === "") return true;
+  const h = normalizeHost(host);
+  if (h === "localhost") return true;
+  if (!localHostname) return true;
+  const own = normalizeHost(localHostname);
+  return h === own || h === own.split(".")[0];
+}
+
+export function createOsc7HostFilter(opts: {
+  ssh: boolean;
+  getLocalHostname: () => string | null;
+}): (host: string) => boolean {
+  let pinned: string | null = null;
+  return (host) => {
+    if (!opts.ssh) return isLocalOsc7Host(host, opts.getLocalHostname());
+    if (host === "") return false;
+    const h = normalizeHost(host);
+    if (pinned === null) pinned = h;
+    return pinned === h;
+  };
 }
 
 export function parseOsc52Clipboard(data: string): string | null {
