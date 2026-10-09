@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
 import {
   ArrowDown01Icon,
   Folder01Icon,
@@ -22,7 +22,6 @@ import {
   MoreHorizontalIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { segmentsFromCwd } from "./lib/pathUtils";
 
@@ -180,11 +179,10 @@ function CurrentSegmentDropdown({
   const load = useCallback(async () => {
     setError(null);
     try {
-      const dirs = await invoke<string[]>("list_subdirs", {
+      const dirs = await fsFor(currentWorkspaceEnv()).listSubdirs(
         path,
         showHidden,
-        workspace: currentWorkspaceEnv(),
-      });
+      );
       setChildren(dirs);
     } catch (e) {
       setError(String(e));

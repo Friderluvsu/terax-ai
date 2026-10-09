@@ -1,16 +1,9 @@
-import { currentWorkspaceEnv } from "@/modules/workspace";
 import {
-  type Completion,
-  startCompletion,
-} from "@codemirror/autocomplete";
-import { invoke } from "@tauri-apps/api/core";
-
-type DirEntry = {
-  name: string;
-  kind: "file" | "dir" | "symlink";
-  size: number;
-  mtime: number;
-};
+  currentWorkspaceEnv,
+  fsFor,
+  type FsDirEntry,
+} from "@/modules/workspace";
+import { type Completion, startCompletion } from "@codemirror/autocomplete";
 
 export type PathResult = { fromOffset: number; options: Completion[] };
 
@@ -38,12 +31,10 @@ export async function pathCompletions(
   const dir = resolveDir(dirPart, cwd);
   if (!dir) return null;
 
-  let entries: DirEntry[];
+  let entries: FsDirEntry[];
   try {
-    entries = await invoke<DirEntry[]>("fs_read_dir", {
-      path: dir,
+    entries = await fsFor(currentWorkspaceEnv()).readDir(dir, {
       showHidden: base.startsWith("."),
-      workspace: currentWorkspaceEnv(),
     });
   } catch {
     return null;

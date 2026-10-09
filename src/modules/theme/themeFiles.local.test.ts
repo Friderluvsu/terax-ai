@@ -11,10 +11,16 @@ vi.mock("@tauri-apps/api/path", () => ({
   appConfigDir: async () => "/cfg",
   join: async (...parts: string[]) => parts.join("/"),
 }));
-vi.mock("@/modules/workspace", () => ({
-  LOCAL_WORKSPACE: { kind: "local" },
-  currentWorkspaceEnv: () => ({ kind: "ssh", host: "dev-box" }),
-}));
+vi.mock("@/modules/workspace", async () => {
+  const { fsFor } = await vi.importActual<
+    typeof import("@/modules/workspace/fs")
+  >("@/modules/workspace/fs");
+  return {
+    LOCAL_WORKSPACE: { kind: "local" },
+    currentWorkspaceEnv: () => ({ kind: "ssh", host: "dev-box" }),
+    fsFor,
+  };
+});
 
 import { deleteThemeFile, starterTheme, writeThemeFile } from "./themeFiles";
 

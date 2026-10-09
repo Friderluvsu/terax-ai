@@ -2,17 +2,11 @@ import { MarkdownCode } from "@/components/ai-elements/markdown-code";
 import { cn } from "@/lib/utils";
 import { parentDir, watchAdd, watchRemove } from "@/modules/explorer/lib/watch";
 import { useHtmlPreviewReload } from "@/modules/html-preview/lib/useHtmlPreviewReload";
-import { currentWorkspaceEnv } from "@/modules/workspace";
-import { invoke } from "@tauri-apps/api/core";
+import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
 import { useCallback, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
 import { MarkdownLink } from "./MarkdownLink";
 import { MarkdownViewToggle } from "./MarkdownViewToggle";
-
-type ReadResult =
-  | { kind: "text"; content: string; size: number }
-  | { kind: "binary"; size: number }
-  | { kind: "toolarge"; size: number; limit: number };
 
 type Status =
   | { kind: "loading" }
@@ -36,10 +30,8 @@ export function MarkdownPreviewPane({ path, visible, onSetView }: Props) {
     (initial: boolean) => {
       let cancelled = false;
       if (initial) setStatus({ kind: "loading" });
-      invoke<ReadResult>("fs_read_file", {
-        path,
-        workspace: currentWorkspaceEnv(),
-      })
+      fsFor(currentWorkspaceEnv())
+        .readFile(path)
         .then((res) => {
           if (cancelled) return;
           if (res.kind === "text") {

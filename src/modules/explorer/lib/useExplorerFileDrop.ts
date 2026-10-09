@@ -1,8 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import { currentWorkspaceEnv, fsFor } from "@/modules/workspace";
 
 type Options = {
   rootPath: string | null;
@@ -69,11 +68,8 @@ export function useExplorerFileDrop({ rootPath, isDir, onCopied }: Options) {
           const dir = dirAt(p.position.x, p.position.y, rootPath, isDir);
           setTargetDir(null);
           if (!dir || p.paths.length === 0) return;
-          void invoke("fs_copy", {
-            sources: p.paths,
-            destDir: dir,
-            workspace: currentWorkspaceEnv(),
-          })
+          void fsFor(currentWorkspaceEnv())
+            .copy(p.paths, dir)
             .then(() => onCopied(dir))
             .catch((err) => toast.error(`Copy failed: ${String(err)}`));
         }
@@ -82,7 +78,9 @@ export function useExplorerFileDrop({ rootPath, isDir, onCopied }: Options) {
         if (disposed) fn();
         else unlisten = fn;
       })
-      .catch((err) => console.error("[terax] explorer drop listen failed:", err));
+      .catch((err) =>
+        console.error("[terax] explorer drop listen failed:", err),
+      );
 
     return () => {
       disposed = true;
