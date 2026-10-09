@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { relativeToRoot } from "./lib/htmlPreviewUrl";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(path.join(here, "HtmlPreviewFrame.tsx"), "utf8");
@@ -26,5 +27,15 @@ describe("HtmlPreviewFrame iframe sandbox", () => {
   });
   it("does not touch the fs watch commands", () => {
     expect(src).not.toMatch(/watchAdd|watchRemove|fs_watch/);
+  });
+  it("takes the iframe src from the backend's canonical url", () => {
+    expect(src).toMatch(/served\?\.url/);
+    expect(src).not.toMatch(/relativeToRoot|htmlPreviewUrl/);
+  });
+});
+
+describe("non-canonical path alias", () => {
+  it("is not derivable client-side, so the frame must not rely on it", () => {
+    expect(relativeToRoot("/var/proj/a.html", "/private/var/proj")).toBeNull();
   });
 });

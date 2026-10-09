@@ -1,10 +1,8 @@
-import { IS_WINDOWS } from "@/lib/platform";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { Globe02Icon, LinkSquare02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
-import { htmlPreviewUrl, relativeToRoot } from "./lib/htmlPreviewUrl";
 import { useHtmlPreviewReload } from "./lib/useHtmlPreviewReload";
 
 type Props = {
@@ -68,13 +66,9 @@ export function HtmlPreviewFrame({ path, rootHint, visible }: Props) {
 
   useHtmlPreviewReload(served?.root ?? null, visible, reload);
 
-  const src = served
-    ? htmlPreviewUrl(
-        served.token,
-        relativeToRoot(path, served.root) ?? "",
-        IS_WINDOWS ? "windows" : "other",
-      )
-    : null;
+  // The backend builds this URL from the canonical entry path, so a
+  // non-canonical `path` prop (symlink, /var vs /private/var) still resolves.
+  const src = served?.url ?? null;
 
   const openExternal = () => {
     if (!served) return;
