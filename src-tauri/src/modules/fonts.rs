@@ -1,13 +1,17 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 const MAX_DEPTH: usize = 3;
 const MAX_FILES: usize = 4000;
 const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_TTC_FACES: u32 = 64;
+const MAX_TABLE_BYTES: u64 = 64 * 1024;
+const MAX_DIR_TABLES: usize = 256;
 
 const NERD_FONT_CANDIDATES: &[&str] = &[
     "JetBrainsMono Nerd Font",
@@ -62,7 +66,7 @@ pub struct Resolved {
 
 #[derive(Default)]
 pub struct FontsState {
-    index: Mutex<Option<Arc<FontIndex>>>,
+    index: OnceCell<Arc<FontIndex>>,
 }
 
 fn u16_at(d: &[u8], o: usize) -> Option<u16> {
@@ -142,6 +146,11 @@ fn name_id(table: &[u8], wanted: u16) -> Option<String> {
 
 fn parse_face(d: &[u8], base: usize) -> Option<FaceMeta> {
     let name = find_table(d, base, b"name")?;
+    parse_tables(name, find_table(d, base, b"OS/2"))
+}
+
+/// Pure over the `name` and `OS/2` table slices.
+fn parse_tables(name: &[u8], os2: Option<&[u8]>) -> Option<FaceMeta> {
     let family = name_id(name, 16).or_else(|| name_id(name, 1))?;
     let style = name_id(name, 17)
         .or_else(|| name_id(name, 2))
@@ -149,7 +158,7 @@ fn parse_face(d: &[u8], base: usize) -> Option<FaceMeta> {
     let style_lc = style.to_lowercase();
     let mut weight = if style_lc.contains("bold") { 700 } else { 400 };
     let mut italic = style_lc.contains("italic") || style_lc.contains("oblique");
-    if let Some(os2) = find_table(d, base, b"OS/2") {
+    if let Some(os2) = os2 {
         if let Some(w) = u16_at(os2, 4).filter(|w| (1..=1000).contains(w)) {
             weight = w;
         }
@@ -176,6 +185,67 @@ pub fn parse_faces(d: &[u8]) -> Vec<FaceMeta> {
             .collect();
     }
     parse_face(d, 0).into_iter().collect()
+}
+
+fn read_at<R: Read + Seek>(f: &mut R, off: u64, len: u64) -> Option<Vec<u8>> {
+    f.seek(SeekFrom::Start(off)).ok()?;
+    let mut buf = Vec::new();
+    f.take(len.min(MAX_TABLE_BYTES))
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some(buf)
+}
+
+/// Reads one face at `base` touching only the header, the table directory and
+/// the `name` / `OS/2` tables (each capped), never the whole file.
+fn read_face<R: Read + Seek>(f: &mut R, base: u64) -> Option<FaceMeta> {
+    let head = read_at(f, base, 12)?;
+    if head.len() < 12 {
+        return None;
+    }
+    let magic = &head[0..4];
+    if magic != [0, 1, 0, 0] && magic != b"OTTO" && magic != b"true" {
+        return None;
+    }
+    let n = (u16_at(&head, 4)? as usize).min(MAX_DIR_TABLES);
+    let dir = read_at(f, base + 12, n as u64 * 16)?;
+    let (mut name, mut os2) = (None, None);
+    for i in 0..dir.len() / 16 {
+        let rec = &dir[i * 16..i * 16 + 16];
+        let off = u32_at(rec, 8)? as u64;
+        let len = u32_at(rec, 12)? as u64;
+        match &rec[0..4] {
+            b"name" if name.is_none() => name = Some((off, len)),
+            b"OS/2" if os2.is_none() => os2 = Some((off, len.min(64))),
+            _ => {}
+        }
+    }
+    let (noff, nlen) = name?;
+    let name = read_at(f, noff, nlen)?;
+    let os2 = os2.and_then(|(o, l)| read_at(f, o, l));
+    parse_tables(&name, os2.as_deref())
+}
+
+/// Like `parse_faces` but streams from a file, reading only the needed ranges.
+fn read_faces<R: Read + Seek>(f: &mut R) -> Vec<FaceMeta> {
+    let Some(head) = read_at(f, 0, 12) else {
+        return Vec::new();
+    };
+    if head.get(0..4) == Some(b"ttcf") {
+        let Some(n) = u32_at(&head, 8) else {
+            return Vec::new();
+        };
+        let n = n.min(MAX_TTC_FACES) as u64;
+        let Some(offs) = read_at(f, 12, n * 4) else {
+            return Vec::new();
+        };
+        let offs: Vec<u64> = (0..offs.len() / 4)
+            .filter_map(|i| u32_at(&offs, i * 4))
+            .map(u64::from)
+            .collect();
+        return offs.into_iter().filter_map(|o| read_face(f, o)).collect();
+    }
+    read_face(f, 0).into_iter().collect()
 }
 
 fn collect_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
@@ -214,8 +284,10 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> FontIndex {
     }
     let mut faces = Vec::new();
     for path in files {
-        let Ok(bytes) = fs::read(&path) else { continue };
-        for m in parse_faces(&bytes) {
+        let Ok(mut file) = fs::File::open(&path) else {
+            continue;
+        };
+        for m in read_faces(&mut file) {
             faces.push(IndexedFace {
                 path: path.clone(),
                 family: m.family,
@@ -313,11 +385,16 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
     v
 }
 
-fn index(state: &FontsState) -> Arc<FontIndex> {
-    let mut guard = state.index.lock().unwrap_or_else(|e| e.into_inner());
-    guard
-        .get_or_insert_with(|| Arc::new(scan_dirs(&system_font_dirs())))
-        .clone()
+async fn index(state: &FontsState) -> Result<Arc<FontIndex>, String> {
+    state
+        .index
+        .get_or_try_init(|| async {
+            tauri::async_runtime::spawn_blocking(|| Arc::new(scan_dirs(&system_font_dirs())))
+                .await
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .cloned()
 }
 
 #[tauri::command]
@@ -325,7 +402,7 @@ pub async fn fonts_resolve(
     state: tauri::State<'_, FontsState>,
     family: String,
 ) -> Result<Option<Resolved>, String> {
-    let idx = index(&state);
+    let idx = index(&state).await?;
     Ok(idx.resolve(&family))
 }
 
@@ -333,7 +410,7 @@ pub async fn fonts_resolve(
 pub async fn fonts_nerd_fallback(
     state: tauri::State<'_, FontsState>,
 ) -> Result<Option<String>, String> {
-    Ok(index(&state).nerd_fallback())
+    Ok(index(&state).await?.nerd_fallback())
 }
 
 #[tauri::command]
@@ -341,13 +418,17 @@ pub async fn font_read(
     state: tauri::State<'_, FontsState>,
     id: u32,
 ) -> Result<tauri::ipc::Response, String> {
-    let idx = index(&state);
-    let path = idx.path_for(id).ok_or("unknown font id")?;
-    let meta = fs::metadata(path).map_err(|e| e.to_string())?;
-    if meta.len() > MAX_FILE_BYTES {
-        return Err("font file too large".into());
-    }
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let idx = index(&state).await?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let path = idx.path_for(id).ok_or("unknown font id")?;
+        let meta = fs::metadata(path).map_err(|e| e.to_string())?;
+        if meta.len() > MAX_FILE_BYTES {
+            return Err("font file too large".into());
+        }
+        fs::read(path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -466,6 +547,28 @@ mod tests {
         let mut ttc = b"ttcf".to_vec();
         ttc.extend([0, 1, 0, 0, 0xff, 0xff, 0xff, 0xff]);
         let _ = parse_faces(&ttc);
+    }
+
+    #[test]
+    fn streaming_reader_matches_pure_parser() {
+        let single = font("Foo Mono", "Bold Italic", 700, true);
+        assert_eq!(
+            read_faces(&mut std::io::Cursor::new(&single)),
+            parse_faces(&single)
+        );
+        let head = 20;
+        let a = sfnt(&[(b"name", name_table(&[(1, "A")]))], head);
+        let b = sfnt(&[(b"name", name_table(&[(1, "B")]))], a.len());
+        let mut d = b"ttcf".to_vec();
+        d.extend([0, 1, 0, 0, 0, 0, 0, 2]);
+        d.extend((head as u32).to_be_bytes());
+        d.extend((a.len() as u32).to_be_bytes());
+        d.extend(&a[head..]);
+        d.extend(&b[a.len()..]);
+        assert_eq!(read_faces(&mut std::io::Cursor::new(&d)).len(), 2);
+        for n in 0..single.len() {
+            let _ = read_faces(&mut std::io::Cursor::new(&single[..n]));
+        }
     }
 
     fn indexed(dir: &Path) -> FontIndex {
