@@ -3,6 +3,7 @@ use super::{
     RemoteEntry, RemoteFs, RemoteMetadata, SetAttrs,
 };
 use crate::modules::remote::control::{build_args, control_path, ssh_binary, Mode};
+use crate::modules::remote::exec::kill_group;
 use futures_util::stream::{self, FuturesOrdered, StreamExt, TryStreamExt};
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::rawsession::Limits;
@@ -166,9 +167,12 @@ async fn handshake(raw: &RawSftpSession) -> Result<Caps, SftpError> {
 }
 
 /// One SFTP session over the stdio of a child process (`ssh -s host sftp`).
+/// The child leads its own process group, so killing it also takes down any
+/// ProxyCommand/ProxyJump helper ssh started.
 pub struct SftpConn {
     raw: RawSftpSession,
     child: Mutex<Child>,
+    pgid: Option<u32>,
     stderr: Arc<Mutex<Vec<u8>>>,
     posix_rename: bool,
     fsync: bool,
@@ -197,13 +201,15 @@ impl SftpConn {
             .map_err(|e| {
                 FsError::Disconnected(format!("spawn {}: {e}", launch.program.display()))
             })?;
+        let pgid = child.id();
         let stderr = Arc::new(Mutex::new(Vec::new()));
         let drain = child
             .stderr
             .take()
             .map(|pipe| tokio::spawn(drain_stderr(pipe, stderr.clone())));
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-            return Err(FsError::Disconnected("sftp child has no stdio".into()));
+            let err = FsError::Disconnected("sftp child has no stdio".into());
+            return Err(connect_failed(child, pgid, drain, &stderr, err).await);
         };
         let cfg = Config {
             request_timeout_secs: request_timeout_secs.max(1),
@@ -214,11 +220,12 @@ impl SftpConn {
             Ok(Ok(caps)) => caps,
             Ok(Err(e)) => {
                 drop(raw);
-                return Err(connect_failed(child, drain, &stderr, map_err(e, "handshake")).await);
+                let err = map_err(e, "handshake");
+                return Err(connect_failed(child, pgid, drain, &stderr, err).await);
             }
             Err(_) => {
                 drop(raw);
-                return Err(connect_failed(child, drain, &stderr, FsError::Timeout).await);
+                return Err(connect_failed(child, pgid, drain, &stderr, FsError::Timeout).await);
             }
         };
         if let Some(limits) = caps.limits {
@@ -228,6 +235,7 @@ impl SftpConn {
         Ok(Self {
             raw,
             child: Mutex::new(child),
+            pgid,
             stderr,
             posix_rename: caps.posix_rename,
             fsync: caps.fsync,
@@ -241,7 +249,11 @@ impl SftpConn {
     }
 
     pub fn kill(&self) {
-        let _ = lock(&self.child).start_kill();
+        let mut child = lock(&self.child);
+        if let Some(pgid) = self.pgid {
+            kill_group(pgid);
+        }
+        let _ = child.start_kill();
     }
 
     fn stderr_text(&self) -> String {
@@ -461,6 +473,12 @@ impl SftpConn {
     fn without_posix_rename(mut self) -> Self {
         self.posix_rename = false;
         self
+    }
+}
+
+impl Drop for SftpConn {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -813,14 +831,17 @@ impl SftpPool {
 
 async fn connect_failed(
     mut child: Child,
+    pgid: Option<u32>,
     drain: Option<JoinHandle<()>>,
     stderr: &Mutex<Vec<u8>>,
     err: FsError,
 ) -> FsError {
-    if tokio::time::timeout(EXIT_GRACE, child.wait())
-        .await
-        .is_err()
-    {
+    let exited = tokio::time::timeout(EXIT_GRACE, child.wait()).await.is_ok();
+    // Helpers (ProxyCommand, ProxyJump) share the group and can outlive ssh.
+    if let Some(pgid) = pgid {
+        kill_group(pgid);
+    }
+    if !exited {
         let _ = child.start_kill();
         let _ = tokio::time::timeout(EXIT_GRACE, child.wait()).await;
     }
@@ -1303,6 +1324,74 @@ mod server_tests {
             assert_eq!(fs.stat("/").await, Err(FsError::Timeout));
             assert!(start.elapsed() < Duration::from_secs(5));
             fs.kill();
+        });
+    }
+
+    /// Fake server whose shell backgrounds a `sleep` in the same process group
+    /// (like ssh's ProxyCommand helper) and records its pid in `pidfile`.
+    fn group_launch(pidfile: &Path, rest: &str) -> Launch {
+        Launch {
+            program: PathBuf::from("/bin/sh"),
+            args: vec![
+                "-c".into(),
+                format!("sleep 30 & echo $! > '{}'; {rest}", pidfile.display()),
+            ],
+        }
+    }
+
+    fn helper_pid(pidfile: &Path) -> i32 {
+        std::fs::read_to_string(pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    async fn gone(pid: i32) -> bool {
+        for _ in 0..300 {
+            // SAFETY: signal 0 only probes whether the pid exists.
+            let rc = unsafe { libc::kill(pid, 0) };
+            if rc != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    #[test]
+    fn kill_takes_down_the_whole_process_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handshake = "printf '\\000\\000\\000\\005\\002\\000\\000\\000\\003'; exec sleep 30";
+        rt().block_on(async {
+            let pidfile = tmp.path().join("kill");
+            let launch = group_launch(&pidfile, handshake);
+            let fs = SftpConn::connect_with(&launch, Duration::from_secs(5), 1)
+                .await
+                .unwrap();
+            let helper = helper_pid(&pidfile);
+            fs.kill();
+            assert!(exited(&fs).await);
+            assert!(gone(helper).await, "helper survived kill()");
+
+            let pidfile = tmp.path().join("drop");
+            let launch = group_launch(&pidfile, handshake);
+            let fs = SftpConn::connect_with(&launch, Duration::from_secs(5), 1)
+                .await
+                .unwrap();
+            let helper = helper_pid(&pidfile);
+            drop(fs);
+            assert!(gone(helper).await, "helper survived drop");
+
+            let pidfile = tmp.path().join("timeout");
+            let launch = group_launch(&pidfile, "exec sleep 30");
+            let err = SftpConn::connect_with(&launch, Duration::from_millis(300), 1)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(err, FsError::Timeout);
+            let helper = helper_pid(&pidfile);
+            assert!(gone(helper).await, "helper survived connect timeout");
         });
     }
 }

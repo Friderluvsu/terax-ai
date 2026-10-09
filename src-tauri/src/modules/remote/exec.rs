@@ -71,7 +71,7 @@ fn read_capped(mut r: impl Read, cap: usize) -> (Vec<u8>, bool) {
     (kept, truncated)
 }
 
-fn kill_group(pid: u32) {
+pub(crate) fn kill_group(pid: u32) {
     if let Ok(pid) = i32::try_from(pid) {
         // SAFETY: killpg on the group this function's caller created.
         unsafe {
