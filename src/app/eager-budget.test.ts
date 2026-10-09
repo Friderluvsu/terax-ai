@@ -55,6 +55,15 @@ describe("startup bundle budget", () => {
     expect(lock).not.toMatch(/(?:@xterm\/|xterm-addon-|\bxterm@)/);
   });
 
+  it("keeps html-preview out of the startup graph", () => {
+    for (const entry of ["src/main.tsx", "src/settings/main.tsx"]) {
+      const { files } = traceEager(entry);
+      expect(
+        [...files].filter((file) => /[/\\]html-preview[/\\]/.test(file)),
+      ).toEqual([]);
+    }
+  });
+
   it("main window does not eagerly pull editor/AI/markdown stacks", () => {
     expect(heavyEagerHits("src/main.tsx")).toEqual([]);
   });
