@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  PTY_RESIZE_DEBOUNCE_MS,
+  PTY_RESIZE_INTERVAL_MS,
   PtyResizeScheduler,
 } from "./ptyResizeScheduler";
 import {
@@ -46,7 +46,7 @@ describe("terminalResizeInteraction", () => {
     unsubscribe();
   });
 
-  it("keeps a session-owned PTY scheduler silent for the full gesture", () => {
+  it("keeps a session-owned PTY scheduler throttled during the gesture", () => {
     vi.useFakeTimers();
     const deliver = vi.fn();
     const scheduler = new PtyResizeScheduler(deliver);
@@ -58,23 +58,15 @@ describe("terminalResizeInteraction", () => {
 
     beginTerminalResizeInteraction(token);
     scheduler.schedule(90, 30);
-    vi.advanceTimersByTime(PTY_RESIZE_DEBOUNCE_MS * 10);
-    scheduler.schedule(120, 40);
-    vi.advanceTimersByTime(PTY_RESIZE_DEBOUNCE_MS * 10);
-    expect(deliver).not.toHaveBeenCalled();
-    expect(scheduler.diagnostics()).toMatchObject({
-      schedules: 2,
-      deliveries: 0,
-      suspended: true,
-      pending: { cols: 120, rows: 40 },
-    });
+    vi.advanceTimersByTime(PTY_RESIZE_INTERVAL_MS);
+    expect(deliver).toHaveBeenLastCalledWith(90, 30);
+    expect(scheduler.diagnostics()).toMatchObject({ suspended: true });
 
+    scheduler.schedule(120, 40);
     endTerminalResizeInteraction(token);
-    vi.advanceTimersByTime(PTY_RESIZE_DEBOUNCE_MS);
-    expect(deliver).toHaveBeenCalledOnce();
-    expect(deliver).toHaveBeenCalledWith(120, 40);
+    expect(deliver).toHaveBeenLastCalledWith(120, 40);
     expect(scheduler.diagnostics()).toMatchObject({
-      deliveries: 1,
+      deliveries: 2,
       suspended: false,
       pending: null,
     });

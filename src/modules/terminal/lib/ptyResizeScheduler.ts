@@ -1,4 +1,4 @@
-export const PTY_RESIZE_DEBOUNCE_MS = 256;
+export const PTY_RESIZE_INTERVAL_MS = 100;
 
 export type PtyDimensions = {
   readonly cols: number;
@@ -15,9 +15,10 @@ export type PtyResizeSchedulerDiagnostics = {
 };
 
 /**
- * Owns trailing PTY geometry delivery independently from a renderer surface.
- * Interactive layout transactions may suspend delivery while retaining only
- * the latest dimensions, and a replaced PTY generation can reset stale state.
+ * Throttles PTY geometry delivery independently from a renderer surface. The
+ * model reflows immediately and clears its prompt, so the shell must hear about
+ * sizes during a drag to redraw it; at most one delivery per interval keeps
+ * full-screen redraws bounded. A replaced PTY generation can reset stale state.
  */
 export class PtyResizeScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -30,7 +31,7 @@ export class PtyResizeScheduler {
 
   constructor(
     private readonly deliver: (cols: number, rows: number) => void,
-    private readonly delayMs = PTY_RESIZE_DEBOUNCE_MS,
+    private readonly intervalMs = PTY_RESIZE_INTERVAL_MS,
   ) {}
 
   schedule(cols: number, rows: number): void {
@@ -47,23 +48,19 @@ export class PtyResizeScheduler {
       this.pending = { cols, rows };
     }
     if (!sameDimensions(this.delivered, cols, rows)) this.moved = true;
-    if (this.suspended) return;
-    this.armTimer();
+    if (this.timer === null) this.armTimer();
   }
 
-  /** Holds the latest dimensions without notifying the shell. */
+  /** Marks a user drag; deliveries stay throttled while it lasts. */
   suspend(): void {
-    if (this.suspended) return;
     this.suspended = true;
-    if (this.timer !== null) globalThis.clearTimeout(this.timer);
-    this.timer = null;
   }
 
-  /** Restarts the trailing quiet period for dimensions collected while held. */
+  /** Ends a user drag and delivers the final dimensions without waiting. */
   resume(): void {
     if (!this.suspended) return;
     this.suspended = false;
-    if (this.pending !== null) this.armTimer();
+    if (this.pending !== null) this.flush();
   }
 
   /** Clears dimensions belonging to a PTY generation that is being replaced. */
@@ -76,7 +73,6 @@ export class PtyResizeScheduler {
   }
 
   flush(): boolean {
-    if (this.suspended) return false;
     if (this.timer !== null) globalThis.clearTimeout(this.timer);
     this.timer = null;
     const dimensions = this.pending;
@@ -117,7 +113,7 @@ export class PtyResizeScheduler {
 
   private armTimer(): void {
     if (this.timer !== null) globalThis.clearTimeout(this.timer);
-    this.timer = globalThis.setTimeout(() => this.flush(), this.delayMs);
+    this.timer = globalThis.setTimeout(() => this.flush(), this.intervalMs);
   }
 }
 
