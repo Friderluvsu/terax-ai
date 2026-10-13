@@ -24,8 +24,16 @@ export type SerializedTab =
       customTitle?: string;
     }
   | { kind: "editor"; path: string; docView?: DocView }
+  | {
+      kind: "editor";
+      scratchId: string;
+      title: string;
+      language?: string | null;
+    }
   | { kind: "preview"; url: string }
   | { kind: "markdown"; path: string };
+
+const SCRATCH_ID = /^[a-f0-9]{32}$/;
 
 function isDocView(v: unknown): v is DocView {
   return v === "code" || v === "split" || v === "preview";
@@ -83,6 +91,14 @@ function serializeTab(tab: Tab): SerializedTab | null {
         ...(tab.customTitle !== undefined && { customTitle: tab.customTitle }),
       };
     case "editor":
+      if (tab.untitled) {
+        return {
+          kind: "editor",
+          scratchId: tab.untitled.scratchId,
+          title: tab.title,
+          language: tab.overrideLanguage ?? null,
+        };
+      }
       return {
         kind: "editor",
         path: tab.path,
@@ -175,6 +191,24 @@ function hydrateTab(
       } satisfies TerminalTab;
     }
     case "editor":
+      if ("scratchId" in s) {
+        if (typeof s.scratchId !== "string" || !SCRATCH_ID.test(s.scratchId))
+          return null;
+        return {
+          id: allocId(),
+          kind: "editor",
+          spaceId,
+          cold: true,
+          title:
+            typeof s.title === "string" && s.title ? s.title : "Untitled-1",
+          path: "",
+          dirty: false,
+          preview: false,
+          overrideLanguage: typeof s.language === "string" ? s.language : null,
+          untitled: { scratchId: s.scratchId },
+        } satisfies EditorTab;
+      }
+      if (typeof s.path !== "string") return null;
       return {
         id: allocId(),
         kind: "editor",

@@ -23,9 +23,19 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  applyDetectedLanguage,
+  convertUntitledToFile,
+  newScratchId,
+  planUntitledTabOpen,
+  setUntitledEmpty,
+  type UntitledActions,
+  type UntitledState,
+} from "./untitledTabs";
 
 // Matches the renderer slot pool size — over this we'd evict an active leaf.
 export const MAX_PANES_PER_TAB = 4;
@@ -66,6 +76,8 @@ export type EditorTab = TabBase & {
   preview: boolean;
   overrideLanguage?: string | null;
   docView?: DocView;
+  /** Present while the tab is an Untitled buffer; `path` is empty then. */
+  untitled?: UntitledState;
 };
 
 export type PreviewTab = TabBase & {
@@ -1001,6 +1013,31 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     );
   }, []);
 
+  const newUntitledTab = useCallback(() => {
+    const plan = planUntitledTabOpen(
+      tabsRef.current,
+      activeSpaceIdRef.current,
+      () => nextIdRef.current++,
+      newScratchId(),
+    );
+    tabsRef.current = plan.tabs;
+    setTabs(plan.tabs);
+    setActiveId(plan.tabId);
+    return plan.tabId;
+  }, []);
+
+  const untitledActions = useMemo<UntitledActions>(
+    () => ({
+      setEmpty: (id, empty) =>
+        setTabs((curr) => setUntitledEmpty(curr, id, empty)),
+      setDetectedLanguage: (id, language) =>
+        setTabs((curr) => applyDetectedLanguage(curr, id, language)),
+      convertToFile: (id, path) =>
+        setTabs((curr) => convertUntitledToFile(curr, id, path)),
+    }),
+    [],
+  );
+
   const setDocView = useCallback((id: number, view: DocView) => {
     setTabs((curr) =>
       curr.map((t) =>
@@ -1438,6 +1475,8 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     newAgentTab,
     newAgentGroupTab,
     newPrivateTab,
+    newUntitledTab,
+    untitledActions,
     openFileTab,
     pinTab,
     newPreviewTab,

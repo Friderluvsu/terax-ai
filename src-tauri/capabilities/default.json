@@ -21,6 +21,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "opener:default",
+    "dialog:allow-save",
     "log:default",
     "os:default",
     "os:allow-hostname",

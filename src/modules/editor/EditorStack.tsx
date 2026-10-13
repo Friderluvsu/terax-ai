@@ -1,12 +1,13 @@
 import { cn, isHtmlPath, isMarkdownPath, isSvgPath } from "@/lib/utils";
 import { DocumentViewToggle, MarkdownViewToggle } from "@/modules/markdown";
-import type { DocView, EditorTab, Tab } from "@/modules/tabs";
+import type { DocView, EditorTab, Tab, UntitledActions } from "@/modules/tabs";
 import { envForSpace, useSpaces } from "@/modules/spaces";
 import { envCaps } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { EditorPane, type EditorPaneHandle } from "./EditorPane";
 import { HtmlSplitView } from "./HtmlSplitView";
 import { RunScriptButton } from "./RunScriptButton";
+import { SaveAsPathDialog } from "./SaveAsPathDialog";
 
 type Props = {
   tabs: Tab[];
@@ -18,6 +19,7 @@ type Props = {
   onRunScript: (path: string) => void;
   onSetDocView: (id: number, view: DocView) => void;
   rootHint: string | null;
+  untitledActions?: UntitledActions;
 };
 
 export function EditorStack({
@@ -30,6 +32,7 @@ export function EditorStack({
   onRunScript,
   onSetDocView,
   rootHint,
+  untitledActions,
 }: Props) {
   const spaces = useSpaces((s) => s.spaces);
   const editors = tabs.filter(
@@ -99,15 +102,18 @@ export function EditorStack({
     }
   }, [editors]);
 
-  if (editors.length === 0) return null;
+  // The Save As prompt also serves Untitled tabs closed while never mounted.
+  if (editors.length === 0) return <SaveAsPathDialog />;
   return (
     <div className="relative h-full w-full">
+      <SaveAsPathDialog />
       {editors.map((t) => {
         const visible = t.id === activeId;
         const env = envForSpace(t.spaceId, spaces);
         const isLocal = env.kind === "local";
         const htmlTab =
           envCaps(env).htmlPreview && (isHtmlPath(t.path) || isSvgPath(t.path));
+        const untitled = t.untitled !== undefined;
         const pane = (
           <EditorPane
             ref={getRefCallback(t.id)}
@@ -116,6 +122,15 @@ export function EditorStack({
             overrideLanguage={t.overrideLanguage}
             onDirtyChange={getDirtyCallback(t.id)}
             onClose={getCloseCallback(t.id)}
+            tabId={t.id}
+            scratchId={t.untitled?.scratchId}
+            untitledTitle={untitled ? t.title : undefined}
+            spaceRoot={
+              untitled
+                ? (spaces.find((s) => s.id === t.spaceId)?.root ?? rootHint)
+                : undefined
+            }
+            untitledActions={untitled ? untitledActions : undefined}
           />
         );
         return (
@@ -136,7 +151,7 @@ export function EditorStack({
                   renderedHint="Save to preview"
                 />
               )}
-              {isLocal && (
+              {isLocal && !untitled && (
                 <RunScriptButton
                   path={t.path}
                   dirty={t.dirty}

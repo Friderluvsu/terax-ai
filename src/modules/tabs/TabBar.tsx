@@ -52,6 +52,7 @@ import {
   useState,
 } from "react";
 import { labelFor } from "./lib/tabLabel";
+import { untitledHasContent } from "./lib/untitledTabs";
 import type { EditorTab, Tab } from "./lib/useTabs";
 import { NewTabMenu } from "./NewTabMenu";
 
@@ -474,7 +475,8 @@ export function TabBar({
                     <span className={cn("truncate", isPreview && "italic")}>
                       {labelFor(t)}
                     </span>
-                    {t.kind === "editor" && t.dirty ? (
+                    {t.kind === "editor" &&
+                    (t.dirty || untitledHasContent(t)) ? (
                       <span
                         aria-label="Unsaved changes"
                         className="size-1.5 shrink-0 rounded-full bg-foreground/70"

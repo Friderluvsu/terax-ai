@@ -6,10 +6,18 @@ import {
   evaluateCloseHazards,
   hasCloseManyHazards,
   hasNewCloseManyHazards,
+  unsavedTabsInSpace,
 } from "@/app/hooks/tabCloseGuards";
+import {
+  saveScratchAs,
+  untitledCloseActionFor,
+} from "@/modules/editor/lib/scratchStore";
+import { envForSpace, useSpaces } from "@/modules/spaces";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   type CloseTabsPlan,
+  hasUnsavedEditorContent,
+  isUntitledTab,
   nextActiveInSpace,
   planCloseOtherTabs,
   planCloseTabsToRight,
@@ -59,6 +67,11 @@ export function useTabCloseGuards({
     useState<CloseManyPending | null>(null);
   const [closeManyConfirming, setCloseManyConfirming] = useState(false);
   const closeManyRequestRef = useRef(0);
+  const [pendingSpaceDelete, setPendingSpaceDelete] = useState<{
+    spaceId: string;
+    unsaved: number;
+    run: () => void;
+  } | null>(null);
 
   const handleClose = useCallback(
     async (id: number) => {
@@ -66,6 +79,15 @@ export function useTabCloseGuards({
       // dialog entirely so confirming it doesn't appear to silently fail.
       if (nextActiveInSpace(tabs, id) === null) return;
       const t = tabs.find((x) => x.id === id);
+      if (isUntitledTab(t)) {
+        const action = await untitledCloseActionFor(
+          t.untitled.scratchId,
+          t.untitled.empty,
+        );
+        if (action === "discard") disposeTab(id);
+        else setPendingCloseTab(id);
+        return;
+      }
       if (t?.kind === "editor" && t.dirty) {
         setPendingCloseTab(id);
         return;
@@ -87,9 +109,7 @@ export function useTabCloseGuards({
     const close = new Set(closeIds);
     const affected = tabsRef.current.filter((tab) => close.has(tab.id));
     return {
-      dirtyIds: affected
-        .filter((tab) => tab.kind === "editor" && tab.dirty)
-        .map((tab) => tab.id),
+      dirtyIds: affected.filter(hasUnsavedEditorContent).map((tab) => tab.id),
       leafIds: affected
         .filter((tab) => tab.kind === "terminal")
         .flatMap((tab) => leafIds(tab.paneTree)),
@@ -188,6 +208,40 @@ export function useTabCloseGuards({
     setPendingCloseTab(null);
   }, []);
 
+  // Untitled "Save": Save As from the scratch copy, close only once written.
+  const saveAndClose = useCallback(async () => {
+    const id = pendingCloseTab;
+    setPendingCloseTab(null);
+    const tab = tabsRef.current.find((t) => t.id === id);
+    if (id === null || !isUntitledTab(tab)) return;
+    const { spaces } = useSpaces.getState();
+    const saved = await saveScratchAs(
+      {
+        scratchId: tab.untitled.scratchId,
+        title: tab.title,
+        language: tab.overrideLanguage,
+      },
+      envForSpace(tab.spaceId, spaces),
+      spaces.find((s) => s.id === tab.spaceId)?.root ?? null,
+    );
+    if (saved) disposeTab(id);
+  }, [pendingCloseTab, disposeTab]);
+
+  const requestDeleteSpace = useCallback((spaceId: string, run: () => void) => {
+    const unsaved = unsavedTabsInSpace(tabsRef.current, spaceId).length;
+    if (unsaved === 0) run();
+    else setPendingSpaceDelete({ spaceId, unsaved, run });
+  }, []);
+
+  const confirmSpaceDelete = useCallback(() => {
+    pendingSpaceDelete?.run();
+    setPendingSpaceDelete(null);
+  }, [pendingSpaceDelete]);
+
+  const cancelSpaceDelete = useCallback(() => {
+    setPendingSpaceDelete(null);
+  }, []);
+
   const confirmTerminalClose = useCallback(() => {
     if (pendingTerminalCloseTab !== null) disposeTab(pendingTerminalCloseTab);
     setPendingTerminalCloseTab(null);
@@ -232,6 +286,11 @@ export function useTabCloseGuards({
     handleCloseOtherTabs,
     confirmClose,
     cancelClose,
+    saveAndClose,
+    pendingSpaceDelete,
+    requestDeleteSpace,
+    confirmSpaceDelete,
+    cancelSpaceDelete,
     confirmTerminalClose,
     cancelTerminalClose,
     confirmDeleteClose,

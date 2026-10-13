@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { flushScratchBeforeQuit } from "@/modules/editor/lib/scratchStore";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
 import { leafHasForegroundProcess, leafIds } from "@/modules/terminal";
@@ -38,6 +39,9 @@ export function useAppCloseGuard(tabsRef: RefObject<Tab[]>) {
       .onCloseRequested(async (event) => {
         if (forceClose.current) return;
         event.preventDefault();
+        // Untitled buffers persist on their own; quitting only waits for
+        // the last debounced write and never asks about them.
+        const flushed = flushScratchBeforeQuit();
         // Opting out skips the per-leaf IPC entirely; it never relaxes the
         // unsaved-changes guard below.
         const busyTerminal =
@@ -50,6 +54,7 @@ export function useAppCloseGuard(tabsRef: RefObject<Tab[]>) {
         if (dirtyEditors > 0 || busyTerminal) {
           setPendingAppClose({ dirtyEditors, busyTerminal });
         } else {
+          await flushed;
           forceClose.current = true;
           void getCurrentWindow().close();
         }
@@ -64,8 +69,9 @@ export function useAppCloseGuard(tabsRef: RefObject<Tab[]>) {
     };
   }, [tabsRef]);
 
-  const confirmAppClose = useCallback(() => {
+  const confirmAppClose = useCallback(async () => {
     setPendingAppClose(null);
+    await flushScratchBeforeQuit();
     forceClose.current = true;
     void getCurrentWindow().close();
   }, []);

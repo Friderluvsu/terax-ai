@@ -16,7 +16,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { setConfirmCloseRunningTerminal } from "@/modules/settings/store";
-import type { Tab } from "@/modules/tabs";
+import { isUntitledTab, type Tab } from "@/modules/tabs";
 import { useId, useState } from "react";
 
 type Props = {
@@ -24,6 +24,10 @@ type Props = {
   pendingCloseTab: number | null;
   onCancelClose: () => void;
   onConfirmClose: () => void;
+  onSaveClose: () => void;
+  pendingSpaceDelete: { unsaved: number } | null;
+  onCancelSpaceDelete: () => void;
+  onConfirmSpaceDelete: () => void;
   pendingTerminalCloseTab: number | null;
   onCancelTerminalClose: () => void;
   onConfirmTerminalClose: () => void;
@@ -122,6 +126,10 @@ export function CloseDialogs({
   pendingCloseTab,
   onCancelClose,
   onConfirmClose,
+  onSaveClose,
+  pendingSpaceDelete,
+  onCancelSpaceDelete,
+  onConfirmSpaceDelete,
   pendingTerminalCloseTab,
   onCancelTerminalClose,
   onConfirmTerminalClose,
@@ -140,6 +148,8 @@ export function CloseDialogs({
   const [optOutAppClose, setOptOutAppClose] = useState(false);
   const appCloseCanOptOut =
     pendingAppClose !== null && canOptOutOfAppClosePrompt(pendingAppClose);
+  const closingTab = tabs.find((t) => t.id === pendingCloseTab);
+  const closingUntitled = isUntitledTab(closingTab);
 
   const confirmTerminalClose = () => {
     if (optOutTerminalClose) void persistOptOut();
@@ -173,22 +183,35 @@ export function CloseDialogs({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogTitle>
+              {closingUntitled ? "Save Changes?" : "Unsaved Changes"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {tabs.find((t) => t.id === pendingCloseTab)?.title
-                ? `"${
-                    tabs.find((t) => t.id === pendingCloseTab)?.title
-                  }" has unsaved changes. Close anyway?`
-                : "This file has unsaved changes. Close anyway?"}
+              {closingUntitled
+                ? `Do you want to save "${closingTab.title}" to a file? Its contents are lost if you don't save.`
+                : closingTab?.title
+                  ? `"${closingTab.title}" has unsaved changes. Close anyway?`
+                  : "This file has unsaved changes. Close anyway?"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={onCancelClose}>
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction onClick={onConfirmClose}>
-              Close Anyway
-            </AlertDialogAction>
+            {closingUntitled ? (
+              <>
+                <AlertDialogAction variant="outline" onClick={onConfirmClose}>
+                  Don't Save
+                </AlertDialogAction>
+                <AlertDialogAction onClick={onSaveClose}>
+                  Save...
+                </AlertDialogAction>
+              </>
+            ) : (
+              <AlertDialogAction onClick={onConfirmClose}>
+                Close Anyway
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -277,6 +300,30 @@ export function CloseDialogs({
               }}
             >
               {closeManyConfirming ? "Checking..." : "Close Anyway"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingSpaceDelete !== null}
+        onOpenChange={(open) => !open && onCancelSpaceDelete()}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Space?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingSpaceDelete?.unsaved === 1
+                ? "A tab in this space has unsaved changes. Deleting the space will discard them."
+                : `${pendingSpaceDelete?.unsaved ?? 0} tabs in this space have unsaved changes. Deleting the space will discard them.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={onCancelSpaceDelete}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={onConfirmSpaceDelete}>
+              Delete Anyway
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

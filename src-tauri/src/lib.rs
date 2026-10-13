@@ -212,6 +212,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol(preview::SCHEME, preview::handler::handle)
         .setup(move |_app| {
             #[cfg(target_os = "macos")]
@@ -360,6 +361,10 @@ pub fn run() {
             vibrancy::window_backdrop_kind,
             vibrancy::window_set_backdrop,
             modules::window_presentation::window_presentation_state,
+            modules::scratch::scratch_write,
+            modules::scratch::scratch_read,
+            modules::scratch::scratch_delete,
+            modules::scratch::scratch_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

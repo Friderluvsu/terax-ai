@@ -9,3 +9,4 @@ export {
 export { useApplyEditorFontSize } from "./lib/useApplyEditorFontSize";
 export { NewEditorDialog } from "./NewEditorDialog";
 export { useEditorFileSync } from "./useEditorFileSync";
+export { useScratchLifecycle } from "./lib/useScratchLifecycle";

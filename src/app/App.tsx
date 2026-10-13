@@ -42,6 +42,7 @@ import {
   NewEditorDialog,
   useApplyEditorFontSize,
   useEditorFileSync,
+  useScratchLifecycle,
 } from "@/modules/editor";
 import { FileExplorer, type FileExplorerHandle } from "@/modules/explorer";
 import type { GitHistorySearchHandle } from "@/modules/git-history";
@@ -178,6 +179,8 @@ export default function App() {
     newAgentTab,
     newAgentGroupTab,
     newPrivateTab,
+    newUntitledTab,
+    untitledActions,
     openFileTab,
     pinTab,
     newPreviewTab,
@@ -380,6 +383,7 @@ export default function App() {
   const isGitHistoryTab = activeTab?.kind === "git-history";
 
   useEditorFileSync({ tabs, tabsRef, editorRefs });
+  useScratchLifecycle(tabs, booted);
   useThemeFileEditing({ tabsRef, openFileTab });
 
   const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd(
@@ -455,6 +459,11 @@ export default function App() {
     handleCloseOtherTabs,
     confirmClose,
     cancelClose,
+    saveAndClose,
+    pendingSpaceDelete,
+    requestDeleteSpace,
+    confirmSpaceDelete,
+    cancelSpaceDelete,
     confirmTerminalClose,
     cancelTerminalClose,
     confirmDeleteClose,
@@ -1050,6 +1059,11 @@ export default function App() {
     [setActiveId, focusPane],
   );
 
+  const openUntitledEditor = useCallback(() => {
+    const id = newUntitledTab();
+    pendingEditorNavigation.current.set(id, { focus: true });
+  }, [newUntitledTab]);
+
   const shortcutHandlers = useMemo<ShortcutHandlers>(
     () => ({
       "commandPalette.open": () => openCommandPalette("commands"),
@@ -1058,7 +1072,7 @@ export default function App() {
       "tab.newBlock": hotkeyNewBlockTab,
       "tab.newPrivate": openNewPrivateTab,
       "tab.newPreview": () => openPreviewTab(""),
-      "tab.newEditor": () => setNewEditorOpen(true),
+      "tab.newEditor": openUntitledEditor,
       "tab.close": handleCloseTabOrPane,
       "tab.next": () => stepSwitcher(1),
       "tab.prev": () => stepSwitcher(-1),
@@ -1131,6 +1145,7 @@ export default function App() {
       hotkeyNewTab,
       hotkeyNewBlockTab,
       openNewPrivateTab,
+      openUntitledEditor,
       openPreviewTab,
       activeSpaceId,
       selectByIndex,
@@ -1386,15 +1401,16 @@ export default function App() {
   }, [sshConnected, workspaceEnv, adoptWorkspaceEnv]);
 
   const handleDeleteSpace = useCallback(
-    (id: string) => {
-      const nextSpaceId = useSpaces.getState().remove(id);
-      if (!nextSpaceId) return;
-      const root = useSpaces
-        .getState()
-        .spaces.find((s) => s.id === nextSpaceId)?.root;
-      removeTabsForSpace(id, nextSpaceId, root ?? undefined);
-    },
-    [removeTabsForSpace],
+    (id: string) =>
+      requestDeleteSpace(id, () => {
+        const nextSpaceId = useSpaces.getState().remove(id);
+        if (!nextSpaceId) return;
+        const root = useSpaces
+          .getState()
+          .spaces.find((s) => s.id === nextSpaceId)?.root;
+        removeTabsForSpace(id, nextSpaceId, root ?? undefined);
+      }),
+    [removeTabsForSpace, requestDeleteSpace],
   );
 
   const handleMoveTab = useCallback(
@@ -1470,7 +1486,8 @@ export default function App() {
             openSsh: openSshTab,
             openSshSpace,
             openSshConnect,
-            openNewEditor: () => setNewEditorOpen(true),
+            openNewEditor: openUntitledEditor,
+            openNewFileInProject: () => setNewEditorOpen(true),
             openNewPreview: () => openPreviewTab(""),
             openGitGraph: openGitGraphFromContext,
             toggleSourceControl,
@@ -1502,6 +1519,7 @@ export default function App() {
       openNewTab,
       openNewBlockTab,
       openNewPrivateTab,
+      openUntitledEditor,
       sshHosts,
       openSshTab,
       openSshSpace,
@@ -1751,6 +1769,7 @@ export default function App() {
                         onSetMarkdownView={setMarkdownView}
                         onRunScript={runScriptInNewTab}
                         onSetDocView={setDocView}
+                        untitledActions={untitledActions}
                         explorerRoot={explorerRoot}
                       />
                     </div>
@@ -1865,6 +1884,10 @@ export default function App() {
             pendingCloseTab={pendingCloseTab}
             onCancelClose={cancelClose}
             onConfirmClose={confirmClose}
+            onSaveClose={() => void saveAndClose()}
+            pendingSpaceDelete={pendingSpaceDelete}
+            onCancelSpaceDelete={cancelSpaceDelete}
+            onConfirmSpaceDelete={confirmSpaceDelete}
             pendingTerminalCloseTab={pendingTerminalCloseTab}
             onCancelTerminalClose={cancelTerminalClose}
             onConfirmTerminalClose={confirmTerminalClose}
