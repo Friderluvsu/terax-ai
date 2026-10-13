@@ -48,6 +48,7 @@ export type CommandPaletteActionContext = {
   openSshSpace: (alias: string) => void;
   openSshConnect: () => void;
   openNewEditor: () => void;
+  openNewFileInProject: () => void;
   openNewPreview: () => void;
   openGitGraph: () => void;
   toggleSourceControl: () => void;
@@ -207,11 +208,19 @@ export function createCommandItems(
       id: "tab.newEditor",
       title: "New editor tab",
       group: "Tabs",
-      keywords: ["file", "editor", "create"],
+      keywords: ["file", "editor", "create", "untitled", "scratch"],
       icon: FileEditIcon,
       shortcutId: "tab.newEditor",
-      disabledReason: noWorkspaceRoot ? "No workspace root" : undefined,
       run: ctx.openNewEditor,
+    },
+    {
+      id: "tab.newFileInProject",
+      title: "New File in Project...",
+      group: "Tabs",
+      keywords: ["file", "create", "project", "workspace"],
+      icon: FileEditIcon,
+      disabledReason: noWorkspaceRoot ? "No workspace root" : undefined,
+      run: ctx.openNewFileInProject,
     },
     {
       id: "tab.newPreview",

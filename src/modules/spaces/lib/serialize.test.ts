@@ -177,6 +177,66 @@ describe("hydrateTabs", () => {
     ]);
   });
 
+  it("round-trips Untitled tabs by scratch id, title and language", () => {
+    const scratchId = "0123456789abcdef0123456789abcdef";
+    const tab = {
+      id: 4,
+      kind: "editor",
+      spaceId: "s1",
+      title: "Untitled-2",
+      path: "",
+      dirty: false,
+      preview: false,
+      overrideLanguage: "json",
+      untitled: { scratchId, empty: false },
+    } as Tab;
+    const ser = serializeTabs([tab]);
+    expect(ser).toEqual([
+      { kind: "editor", scratchId, title: "Untitled-2", language: "json" },
+    ]);
+    const [back] = hydrateTabs(ser, "s3", counter());
+    expect(back).toMatchObject({
+      kind: "editor",
+      spaceId: "s3",
+      cold: true,
+      title: "Untitled-2",
+      path: "",
+      preview: false,
+      overrideLanguage: "json",
+      untitled: { scratchId },
+    });
+    expect(
+      (back as { untitled?: { empty?: boolean } }).untitled?.empty,
+    ).toBeUndefined();
+  });
+
+  it("drops Untitled entries with a malformed scratch id", () => {
+    const out = hydrateTabs(
+      [
+        { kind: "editor", scratchId: "../../etc/passwd", title: "x" },
+        { kind: "editor", scratchId: 7, title: "x" } as never,
+        { kind: "editor", path: "/a/kept.ts" },
+      ],
+      "s1",
+      counter(),
+    );
+    expect(out.map((t) => t.title)).toEqual(["kept.ts"]);
+  });
+
+  it("still hydrates the pre-Untitled editor format", () => {
+    const [old] = hydrateTabs(
+      [{ kind: "editor", path: "/a/old.ts" }],
+      "s1",
+      counter(),
+    );
+    expect(old).toMatchObject({
+      kind: "editor",
+      path: "/a/old.ts",
+      title: "old.ts",
+    });
+    expect("untitled" in old).toBe(false);
+  });
+
   it("hydrates editor/preview/markdown as cold with derived titles", () => {
     const serialized: SerializedTab[] = [
       { kind: "editor", path: "/a/foo.ts" },

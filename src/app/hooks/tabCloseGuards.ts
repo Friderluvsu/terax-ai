@@ -1,5 +1,9 @@
 import { pathAtOrUnder } from "@/lib/paths";
-import type { CloseTabsPlan, Tab } from "@/modules/tabs";
+import {
+  type CloseTabsPlan,
+  hasUnsavedEditorContent,
+  type Tab,
+} from "@/modules/tabs";
 
 export { pathAtOrUnder };
 
@@ -70,6 +74,15 @@ export function deletedPathTabs(
     (tab.kind === "editor" && tab.dirty ? dirtyIds : cleanIds).push(tab.id);
   }
   return { dirtyIds, cleanIds };
+}
+
+export function unsavedTabsInSpace(
+  tabs: readonly Tab[],
+  spaceId: string,
+): number[] {
+  return tabs
+    .filter((tab) => tab.spaceId === spaceId && hasUnsavedEditorContent(tab))
+    .map((tab) => tab.id);
 }
 
 export function spacesEmptiedByTabs(

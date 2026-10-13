@@ -10,6 +10,7 @@ import {
   pathAtOrUnder,
   renamedPath,
   spacesEmptiedByTabs,
+  unsavedTabsInSpace,
 } from "./tabCloseGuards";
 import type { EditorTab, MarkdownTab } from "@/modules/tabs";
 
@@ -191,5 +192,38 @@ describe("evaluateCloseHazards", () => {
     };
     const result = await evaluateCloseHazards(capture, async () => false, true);
     expect(result).toEqual(hazards([], [last]));
+  });
+});
+
+describe("unsavedTabsInSpace", () => {
+  it("counts dirty files and Untitled buffers with content in that space", () => {
+    const base = {
+      kind: "editor",
+      dirty: false,
+      preview: false,
+    } as const;
+    const tabs: EditorTab[] = [
+      { ...base, id: 1, spaceId: "s1", title: "a", path: "/a", dirty: true },
+      { ...base, id: 2, spaceId: "s1", title: "b", path: "/b" },
+      {
+        ...base,
+        id: 3,
+        spaceId: "s1",
+        title: "Untitled-1",
+        path: "",
+        untitled: { scratchId: "a".repeat(32), empty: true },
+      },
+      {
+        ...base,
+        id: 4,
+        spaceId: "s1",
+        title: "Untitled-2",
+        path: "",
+        untitled: { scratchId: "b".repeat(32) },
+      },
+      { ...base, id: 5, spaceId: "s2", title: "c", path: "/c", dirty: true },
+    ];
+    expect(unsavedTabsInSpace(tabs, "s1")).toEqual([1, 4]);
+    expect(unsavedTabsInSpace(tabs, "s3")).toEqual([]);
   });
 });

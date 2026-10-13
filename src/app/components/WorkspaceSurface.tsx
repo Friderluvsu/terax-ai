@@ -34,6 +34,7 @@ type Props = {
   onSetMarkdownView: EditorStackProps["onSetMarkdownView"];
   onRunScript: EditorStackProps["onRunScript"];
   onSetDocView: EditorStackProps["onSetDocView"];
+  untitledActions: EditorStackProps["untitledActions"];
   explorerRoot: string | null;
 };
 
@@ -68,6 +69,7 @@ export function WorkspaceSurface({
   onSetMarkdownView,
   onRunScript,
   onSetDocView,
+  untitledActions,
   explorerRoot,
 }: Props) {
   const kind = activeTab?.kind;
@@ -112,6 +114,7 @@ export function WorkspaceSurface({
           onSetMarkdownView={onSetMarkdownView}
           onRunScript={onRunScript}
           onSetDocView={onSetDocView}
+          untitledActions={untitledActions}
           rootHint={explorerRoot}
         />
       </div>

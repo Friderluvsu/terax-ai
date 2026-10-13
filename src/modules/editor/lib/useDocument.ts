@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { documentIo } from "./documentIo";
 import { mtimeChanged } from "./mtime";
 import { detectEol, type Eol, normalizeToLf, restoreEol } from "./eol";
+import { isBlankText } from "./scratch";
+import { readScratch, scheduleScratchWrite } from "./scratchStore";
 
 type ReadResult = FsReadResult;
 
@@ -23,9 +25,18 @@ type Options = {
   path: string;
   env: WorkspaceEnv;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Untitled buffer: loads from and writes through app-data scratch storage. */
+  scratchId?: string;
+  onEmptyChange?: (empty: boolean) => void;
 };
 
-export function useDocument({ path, env, onDirtyChange }: Options) {
+export function useDocument({
+  path,
+  env,
+  onDirtyChange,
+  scratchId,
+  onEmptyChange,
+}: Options) {
   const [doc, setDoc] = useState<DocumentState>({ status: "loading" });
   const [dirty, setDirty] = useState(false);
 
@@ -54,6 +65,20 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
   }, []);
 
   const diskMtimeRef = useRef<number | null>(null);
+  const scratchIdRef = useRef(scratchId);
+  scratchIdRef.current = scratchId;
+  const onEmptyChangeRef = useRef(onEmptyChange);
+  onEmptyChangeRef.current = onEmptyChange;
+  const emptyRef = useRef<boolean | null>(null);
+  // Set by a Save As so the switch to the new path keeps the live buffer.
+  const adoptedPathRef = useRef<string | null>(null);
+
+  const reportEmpty = useCallback((text: string) => {
+    const empty = isBlankText(text);
+    if (empty === emptyRef.current) return;
+    emptyRef.current = empty;
+    onEmptyChangeRef.current?.(empty);
+  }, []);
 
   const writeToDisk = useCallback(async () => {
     const content = bufferRef.current;
@@ -121,12 +146,25 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
   }, []);
 
   const readFromDisk = useCallback(
-    (force: boolean) => documentIo(env, path).read(force),
-    [path, env],
+    (force: boolean): Promise<ReadResult> =>
+      scratchId
+        ? readScratch(scratchId).then((content) => ({
+            kind: "text",
+            content,
+            size: content.length,
+            mtime: 0,
+          }))
+        : documentIo(env, path).read(force),
+    [path, env, scratchId],
   );
 
   // Load on path change.
   useEffect(() => {
+    if (!scratchId && adoptedPathRef.current === path) {
+      adoptedPathRef.current = null;
+      return;
+    }
+    adoptedPathRef.current = null;
     let cancelled = false;
     // "Open anyway" is a per-file decision; a new path starts unforced.
     forceRef.current = false;
@@ -135,7 +173,12 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
 
     readFromDisk(forceRef.current)
       .then((res) => {
-        if (!cancelled) adoptRead(res);
+        if (cancelled) return;
+        adoptRead(res);
+        if (scratchId && res.kind === "text") {
+          diskMtimeRef.current = null;
+          reportEmpty(res.content);
+        }
       })
       .catch((e) => {
         if (!cancelled) setDoc({ status: "error", message: String(e) });
@@ -144,7 +187,7 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
     return () => {
       cancelled = true;
     };
-  }, [readFromDisk, adoptRead]);
+  }, [readFromDisk, adoptRead, scratchId, path, reportEmpty]);
 
   const openAnyway = useCallback(() => {
     forceRef.current = true;
@@ -157,7 +200,7 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
   // Skipped while dirty: never clobber unsaved edits. Re-checked when the
   // read resolves, since typing can start while it is in flight.
   const reload = useCallback((): boolean => {
-    if (dirtyRef.current) return false;
+    if (dirtyRef.current || scratchIdRef.current) return false;
     void readFromDisk(forceRef.current)
       .then((res) => {
         if (!dirtyRef.current) adoptRead(res, true);
@@ -170,6 +213,7 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
 
   const save = useCallback(async (): Promise<boolean> => {
     clearAutoSaveTimer();
+    if (scratchIdRef.current) return false;
     if (bufferRef.current === savedRef.current) return true;
     return saveNow();
   }, [clearAutoSaveTimer, saveNow]);
@@ -191,9 +235,27 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
     [],
   );
 
+  // The buffer was just written to `nextPath`; the tab switches to it next.
+  const adoptSavedAs = useCallback(
+    (nextPath: string, content: string, mtime: number) => {
+      adoptedPathRef.current = nextPath;
+      eolRef.current = "\n";
+      diskMtimeRef.current = mtime;
+      savedRef.current = content;
+      setDirty(bufferRef.current !== content);
+    },
+    [],
+  );
+
   const onChange = useCallback(
     (next: string) => {
       bufferRef.current = next;
+      const scratch = scratchIdRef.current;
+      if (scratch) {
+        scheduleScratchWrite(scratch, next);
+        reportEmpty(next);
+        return;
+      }
       const isDirty = next !== savedRef.current;
       setDirty(isDirty);
 
@@ -206,10 +268,19 @@ export function useDocument({ path, env, onDirtyChange }: Options) {
         }, delay);
       }
     },
-    [clearAutoSaveTimer, saveNow],
+    [clearAutoSaveTimer, saveNow, reportEmpty],
   );
 
   useEffect(() => clearAutoSaveTimer, [path, clearAutoSaveTimer]);
 
-  return { doc, dirty, onChange, save, reload, adoptDiskText, openAnyway };
+  return {
+    doc,
+    dirty,
+    onChange,
+    save,
+    reload,
+    adoptDiskText,
+    adoptSavedAs,
+    openAnyway,
+  };
 }

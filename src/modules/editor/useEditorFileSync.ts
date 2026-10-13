@@ -81,7 +81,7 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
   useEffect(() => {
     const want = new Set<string>();
     for (const t of tabs) {
-      if (t.kind !== "editor") continue;
+      if (t.kind !== "editor" || !t.path) continue;
       const scope = workspaceScopeKey(envForSpace(t.spaceId));
       want.add(`${scope}\0${parentDir(t.path)}`);
     }

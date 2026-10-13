@@ -1,6 +1,7 @@
 import { endpointIdFromCompatModel } from "@/modules/ai/config";
 import { getCustomEndpointKey, getKey } from "@/modules/ai/lib/keyring";
 import { lspFormatDocument, useLspExtension } from "@/modules/lsp";
+import type { UntitledActions } from "@/modules/tabs";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { onKeysChanged } from "@/modules/settings/store";
 import { acceptCompletion, startCompletion } from "@codemirror/autocomplete";
@@ -55,6 +56,12 @@ import {
 } from "./lib/externalFormat";
 import { detectIndentUnit } from "./lib/indent";
 import { type LanguageResult, resolveLanguage } from "./lib/languageResolver";
+import {
+  isBlankText,
+  looksLikeJsonDocument,
+  SCRATCH_DEBOUNCE_MS,
+  suggestedFileName,
+} from "./lib/scratch";
 import { FORCE_READ_LIMIT, useDocument } from "./lib/useDocument";
 import { useEditorThemeExt } from "./lib/useEditorThemeExt";
 import { envCaps, type WorkspaceEnv } from "@/modules/workspace";
@@ -94,6 +101,12 @@ type Props = {
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
   onClose?: () => void;
+  tabId?: number;
+  /** Set for Untitled buffers, which save through Save As. */
+  scratchId?: string;
+  untitledTitle?: string;
+  spaceRoot?: string | null;
+  untitledActions?: UntitledActions;
 };
 
 // Above this, syntax highlighting and LSP are disabled: a multi-MB lezer
@@ -110,15 +123,52 @@ function formatBytes(n: number): string {
 // skip re-rendering entirely when App re-renders (terminal events, tab churn).
 export const EditorPane = memo(
   forwardRef<EditorPaneHandle, Props>(function EditorPane(props, ref) {
-    const { path, env, overrideLanguage, onDirtyChange, onSaved, onClose } =
-      props;
+    const {
+      path,
+      env,
+      overrideLanguage,
+      onDirtyChange,
+      onSaved,
+      onClose,
+      tabId,
+      scratchId,
+      untitledTitle,
+      spaceRoot,
+      untitledActions,
+    } = props;
 
-    const { doc, onChange, save, reload, adoptDiskText, openAnyway } =
-      useDocument({
-        path,
-        env,
-        onDirtyChange,
-      });
+    const untitled = {
+      tabId,
+      scratchId,
+      title: untitledTitle,
+      root: spaceRoot,
+      language: overrideLanguage,
+      actions: untitledActions,
+    };
+    const untitledRef = useRef(untitled);
+    untitledRef.current = untitled;
+    const onEmptyChange = useCallback((empty: boolean) => {
+      const u = untitledRef.current;
+      if (u.tabId !== undefined) u.actions?.setEmpty(u.tabId, empty);
+    }, []);
+
+    const {
+      doc,
+      onChange,
+      save,
+      reload,
+      adoptDiskText,
+      adoptSavedAs,
+      openAnyway,
+    } = useDocument({
+      path,
+      env,
+      onDirtyChange,
+      scratchId,
+      onEmptyChange,
+    });
+    const adoptSavedAsRef = useRef(adoptSavedAs);
+    adoptSavedAsRef.current = adoptSavedAs;
     const reloadRef = useRef(reload);
     reloadRef.current = reload;
     const adoptDiskTextRef = useRef(adoptDiskText);
@@ -192,7 +242,85 @@ export const EditorPane = memo(
     const envRef = useRef(env);
     envRef.current = env;
 
+    const savingAsRef = useRef(false);
+    const closeAfterSaveRef = useRef(false);
+    const saveUntitled = useCallback(async () => {
+      const view = cmRef.current?.view;
+      const u = untitledRef.current;
+      if (!view || !u.scratchId || u.tabId === undefined) return;
+      if (savingAsRef.current) return;
+      savingAsRef.current = true;
+      try {
+        const text = view.state.doc.toString();
+        const { saveUntitledAs } = await import("./lib/untitledSave");
+        const saved = await saveUntitledAs({
+          env: envRef.current,
+          root: u.root ?? null,
+          name: suggestedFileName(u.title ?? "Untitled", u.language),
+          text,
+        });
+        if (!saved) return;
+        adoptSavedAsRef.current(saved.path, text, saved.mtime);
+        u.actions?.convertToFile(u.tabId, saved.path);
+        onSavedRef.current?.();
+        if (closeAfterSaveRef.current) onCloseRef.current?.();
+      } finally {
+        savingAsRef.current = false;
+        closeAfterSaveRef.current = false;
+      }
+    }, []);
+
+    // An Untitled buffer with content never closes silently from vim: :q
+    // refuses like vim does, :wq closes once the Save As lands.
+    const closeFromVim = useCallback(() => {
+      const u = untitledRef.current;
+      if (!u.scratchId) {
+        onCloseRef.current?.();
+        return;
+      }
+      if (savingAsRef.current) {
+        closeAfterSaveRef.current = true;
+        return;
+      }
+      const view = cmRef.current?.view;
+      if (!view || isBlankText(view.state.doc.toString())) {
+        onCloseRef.current?.();
+        return;
+      }
+      toast.warning(`${u.title ?? "Untitled"} has unsaved content`, {
+        description: "Use :w to save it to a file, or close the tab.",
+      });
+    }, []);
+
+    const detectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(
+      () => () => {
+        if (detectTimerRef.current) clearTimeout(detectTimerRef.current);
+      },
+      [],
+    );
+    const handleChange = useCallback(
+      (next: string) => {
+        onChange(next);
+        const u = untitledRef.current;
+        if (!u.scratchId || u.language) return;
+        if (detectTimerRef.current) clearTimeout(detectTimerRef.current);
+        detectTimerRef.current = setTimeout(() => {
+          detectTimerRef.current = null;
+          const latest = untitledRef.current;
+          if (latest.tabId === undefined || !latest.scratchId) return;
+          if (latest.language || !looksLikeJsonDocument(next)) return;
+          latest.actions?.setDetectedLanguage(latest.tabId, "json");
+        }, SCRATCH_DEBOUNCE_MS);
+      },
+      [onChange],
+    );
+
     const performSave = useCallback(async () => {
+      if (untitledRef.current.scratchId) {
+        await saveUntitled();
+        return;
+      }
       const view = cmRef.current?.view;
       const prefs = usePreferencesStore.getState();
       const formatter = resolveFormatter(languageRef.current, prefs);
@@ -248,7 +376,7 @@ export const EditorPane = memo(
         }
       }
       onSavedRef.current?.();
-    }, []);
+    }, [saveUntitled]);
     const performSaveRef = useRef(performSave);
     performSaveRef.current = performSave;
 
@@ -337,7 +465,7 @@ export const EditorPane = memo(
           save: () => {
             void performSaveRef.current();
           },
-          close: () => onCloseRef.current?.(),
+          close: closeFromVim,
         })),
         ...buildSharedExtensions(),
         indentCompartment.of(DEFAULT_INDENT),
@@ -398,7 +526,7 @@ export const EditorPane = memo(
           { key: "Ctrl-g", run: gotoLine },
         ]),
       ],
-      [],
+      [closeFromVim],
     );
 
     useEffect(() => {
@@ -428,7 +556,11 @@ export const EditorPane = memo(
       });
     }, [doc]);
 
-    const lspExt = useLspExtension(path, langId, doc.status === "ready");
+    const lspExt = useLspExtension(
+      path,
+      langId,
+      doc.status === "ready" && !scratchId,
+    );
     useEffect(() => {
       lspActiveRef.current = lspExt !== null;
       const view = cmRef.current?.view;
@@ -677,7 +809,7 @@ export const EditorPane = memo(
         <CodeMirror
           ref={cmRef}
           value={doc.content}
-          onChange={onChange}
+          onChange={handleChange}
           theme={themeExt}
           extensions={extensions}
           height="100%"

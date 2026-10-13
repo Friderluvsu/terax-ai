@@ -108,7 +108,7 @@ export function useAiLiveBridge(params: Params) {
       getActiveFile: () => {
         const { activeId, tabs } = ref.current;
         const t = tabs.find((x) => x.id === activeId);
-        return t?.kind === "editor" ? t.path : null;
+        return t?.kind === "editor" && t.path ? t.path : null;
       },
       openPreview: (url: string) => {
         ref.current.openPreviewTab(url);

@@ -26,5 +26,12 @@ export {
   type AiDiffStatus,
   type TabPatch,
 } from "./lib/useTabs";
+export {
+  droppedScratchIds,
+  hasUnsavedEditorContent,
+  isUntitledTab,
+  scratchIdsOf,
+  type UntitledActions,
+} from "./lib/untitledTabs";
 export { useWorkspaceCwd } from "./lib/useWorkspaceCwd";
 export { useWindowTitle } from "./lib/useWindowTitle";
