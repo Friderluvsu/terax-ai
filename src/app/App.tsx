@@ -1633,7 +1633,7 @@ export default function App() {
               onNewBlock={openNewBlockTab}
               onNewPrivate={openNewPrivateTab}
               onNewPreview={() => openPreviewTab("")}
-              onNewEditor={() => setNewEditorOpen(true)}
+              onNewEditor={openUntitledEditor}
               onNewGitGraph={openGitGraphFromContext}
               onNewSsh={openSshTab}
               onConnectSsh={openSshConnect}
