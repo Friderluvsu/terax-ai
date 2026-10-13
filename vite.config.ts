@@ -16,145 +16,159 @@ const analyze = process.env.ANALYZE === "true";
 const inspectGraph = process.env.INSPECT === "true";
 
 // https://vite.dev/config/
-export default defineConfig(async ({ mode }): Promise<UserConfig> => ({
-  plugins: [
-    babel({
-      presets: [reactCompilerPreset({ target: "19" })],
-    }),
-    react(),
-    tailwindcss(),
-    // Module-graph inspector at /__inspect (who-imports-what, per-plugin
-    // transforms). Opt-in via `pnpm dev:inspect`, never in a production build.
-    ...(mode === "development" && inspectGraph
-      ? [Inspect() as PluginOption]
-      : []),
-    ...(analyze
-      ? [
-          (await import("rollup-plugin-visualizer")).visualizer({
-            filename: "stats.html",
-            template: "treemap",
-            gzipSize: true,
-            brotliSize: true,
-            open: true,
-          }) as PluginOption,
-        ]
-      : []),
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(rootDir, "./src"),
-      // Shim keeps the ~117 kB CJS protocol package out of the bundle.
-      "vscode-languageserver-protocol": path.resolve(
-        rootDir,
-        "./src/modules/lsp/lib/protocolShim.ts",
-      ),
+export default defineConfig(
+  async ({ mode }): Promise<UserConfig> => ({
+    plugins: [
+      babel({
+        presets: [reactCompilerPreset({ target: "19" })],
+      }),
+      react(),
+      tailwindcss(),
+      // Module-graph inspector at /__inspect (who-imports-what, per-plugin
+      // transforms). Opt-in via `pnpm dev:inspect`, never in a production build.
+      ...(mode === "development" && inspectGraph
+        ? [Inspect() as PluginOption]
+        : []),
+      ...(analyze
+        ? [
+            (await import("rollup-plugin-visualizer")).visualizer({
+              filename: "stats.html",
+              template: "treemap",
+              gzipSize: true,
+              brotliSize: true,
+              open: true,
+            }) as PluginOption,
+          ]
+        : []),
+    ],
+    resolve: {
+      alias: {
+        "@": path.resolve(rootDir, "./src"),
+        // Shim keeps the ~117 kB CJS protocol package out of the bundle.
+        "vscode-languageserver-protocol": path.resolve(
+          rootDir,
+          "./src/modules/lsp/lib/protocolShim.ts",
+        ),
+      },
     },
-  },
-  build: {
-    target:
-      process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome120" : "es2022",
-    chunkSizeWarningLimit: 1500,
-    rolldownOptions: {
-      input: {
-        main: path.resolve(rootDir, "index.html"),
-        settings: path.resolve(rootDir, "settings.html"),
-      },
-      // Oxc drops `debugger` by default. These calls return undefined, so
-      // marking them pure lets DCE strip them from production builds.
-      treeshake: {
-        manualPureFunctions: [
-          "console.debug",
-          "console.info",
-          "console.trace",
-        ],
-      },
-      output: {
-        manualChunks(id: string) {
-          // Vite's __vitePreload helper is a virtual module. Left to Rollup it
-          // gets hoisted into whichever chunk it happens to land in (observed:
-          // the 480kB streamdown chunk), and since every lazy importer pulls the
-          // helper, that heavy chunk gets dragged into the eager startup graph.
-          // Pin it to the always-eager react chunk so it costs nothing extra.
-          if (id.includes("vite/preload-helper") || id.includes("/vite/dist/"))
-            return "react";
-
-          if (id.includes("/packages/ghostty-core/")) return "ghostty-vt";
-
-          if (!id.includes("node_modules")) return null;
-
-          // Ubiquitous styling utils used by `cn()` on nearly every eager
-          // component. Left unassigned, Rollup absorbs them into whichever
-          // feature chunk claims them first (observed: streamdown), dragging
-          // that heavy chunk into the eager graph. Pin them to react (eager).
-          if (
-            id.includes("/clsx/") ||
-            id.includes("/tailwind-merge/") ||
-            id.includes("/class-variance-authority/")
-          )
-            return "react";
-
-          // Each AI provider SDK in its own chunk so unused providers
-          // don't bloat the initial load (lazy-imported in agent.ts).
-          if (id.includes("@ai-sdk/anthropic")) return "ai-anthropic";
-          if (id.includes("@ai-sdk/google")) return "ai-google";
-          if (id.includes("@ai-sdk/openai-compatible"))
-            return "ai-openai-compat";
-          if (id.includes("@ai-sdk/openai")) return "ai-openai";
-          if (id.includes("@ai-sdk/cerebras")) return "ai-cerebras";
-          if (id.includes("@ai-sdk/groq")) return "ai-groq";
-          if (id.includes("@ai-sdk/xai")) return "ai-xai";
-          if (id.includes("@ai-sdk/")) return "ai-sdk-shared";
-
-          // Lang packs and legacy modes are dynamically imported by
-          // languageResolver; give each its own named chunk so they load on
-          // demand instead of being glued into the codemirror core chunk.
-          // (bundle audit, issue #551)
-          {
-            const m = id.match(/@codemirror\/lang-([\w-]+)/);
-            if (m) return `cm-lang-${m[1]}`;
-          }
-          {
-            const m = id.match(/@codemirror\/legacy-modes\/mode\/([\w-]+)/);
-            if (m) return `cm-legacy-${m[1]}`;
-          }
-          if (id.includes("@replit/codemirror-lang-svelte"))
-            return "cm-lang-svelte";
-          if (
-            id.includes("@codemirror/") ||
-            id.includes("@uiw/codemirror") ||
-            id.includes("@replit/codemirror")
-          )
-            return "codemirror";
-          if (id.includes("/streamdown/") || id.includes("@streamdown/"))
-            return "streamdown";
-          if (
-            id.includes("/react-dom/") ||
-            id.includes("/react/") ||
-            id.includes("/scheduler/")
-          )
-            return "react";
-          if (id.includes("@radix-ui/") || id.includes("/radix-ui/"))
-            return "radix";
-
-          return null;
+    build: {
+      target:
+        process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome120" : "es2022",
+      chunkSizeWarningLimit: 1500,
+      rolldownOptions: {
+        input: {
+          main: path.resolve(rootDir, "index.html"),
+          settings: path.resolve(rootDir, "settings.html"),
+        },
+        // Oxc drops `debugger` by default. These calls return undefined, so
+        // marking them pure lets DCE strip them from production builds.
+        treeshake: {
+          manualPureFunctions: [
+            "console.debug",
+            "console.info",
+            "console.trace",
+          ],
+        },
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: "startup-vendor",
+                tags: ["$initial"],
+                test: /node_modules/,
+                priority: 100,
+              },
+              {
+                debugName: "feature boundaries",
+                name: featureChunk,
+              },
+            ],
+          },
         },
       },
     },
-  },
-  clearScreen: false,
-  server: {
-    port: 1420,
-    strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      ignored: ["**/src-tauri/**"],
+    clearScreen: false,
+    server: {
+      port: 1420,
+      strictPort: true,
+      host: host || false,
+      hmr: host
+        ? {
+            protocol: "ws",
+            host,
+            port: 1421,
+          }
+        : undefined,
+      watch: {
+        ignored: ["**/src-tauri/**"],
+      },
     },
-  },
-}));
+  }),
+);
+
+function featureChunk(id: string): string | null {
+  // Vite's __vitePreload helper is a virtual module. Left to Rollup it
+  // gets hoisted into whichever chunk it happens to land in (observed:
+  // the 480kB streamdown chunk), and since every lazy importer pulls the
+  // helper, that heavy chunk gets dragged into the eager startup graph.
+  // Pin it to the always-eager react chunk so it costs nothing extra.
+  if (id.includes("vite/preload-helper") || id.includes("/vite/dist/"))
+    return "react";
+
+  if (id.includes("/packages/ghostty-core/")) return "ghostty-vt";
+
+  if (!id.includes("node_modules")) return null;
+
+  // Ubiquitous styling utils used by `cn()` on nearly every eager
+  // component. Left unassigned, Rollup absorbs them into whichever
+  // feature chunk claims them first (observed: streamdown), dragging
+  // that heavy chunk into the eager graph. Pin them to react (eager).
+  if (
+    id.includes("/clsx/") ||
+    id.includes("/tailwind-merge/") ||
+    id.includes("/class-variance-authority/")
+  )
+    return "react";
+
+  // Each AI provider SDK in its own chunk so unused providers
+  // don't bloat the initial load (lazy-imported in agent.ts).
+  if (id.includes("@ai-sdk/anthropic")) return "ai-anthropic";
+  if (id.includes("@ai-sdk/google")) return "ai-google";
+  if (id.includes("@ai-sdk/openai-compatible")) return "ai-openai-compat";
+  if (id.includes("@ai-sdk/openai")) return "ai-openai";
+  if (id.includes("@ai-sdk/cerebras")) return "ai-cerebras";
+  if (id.includes("@ai-sdk/groq")) return "ai-groq";
+  if (id.includes("@ai-sdk/xai")) return "ai-xai";
+  if (id.includes("@ai-sdk/")) return "ai-sdk-shared";
+
+  // Lang packs and legacy modes are dynamically imported by
+  // languageResolver; give each its own named chunk so they load on
+  // demand instead of being glued into the codemirror core chunk.
+  // (bundle audit, issue #551)
+  {
+    const m = id.match(/@codemirror\/lang-([\w-]+)/);
+    if (m) return `cm-lang-${m[1]}`;
+  }
+  {
+    const m = id.match(/@codemirror\/legacy-modes\/mode\/([\w-]+)/);
+    if (m) return `cm-legacy-${m[1]}`;
+  }
+  if (id.includes("@replit/codemirror-lang-svelte")) return "cm-lang-svelte";
+  if (
+    id.includes("@codemirror/") ||
+    id.includes("@uiw/codemirror") ||
+    id.includes("@replit/codemirror")
+  )
+    return "codemirror";
+  if (id.includes("/streamdown/") || id.includes("@streamdown/"))
+    return "streamdown";
+  if (
+    id.includes("/react-dom/") ||
+    id.includes("/react/") ||
+    id.includes("/scheduler/")
+  )
+    return "react";
+  if (id.includes("@radix-ui/") || id.includes("/radix-ui/")) return "radix";
+
+  return null;
+}
