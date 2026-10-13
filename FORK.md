@@ -13,7 +13,7 @@ Personal fork of crynta/terax-ai. TERAX.md is the architecture doc and quality b
 
 - FE: `pnpm lint && pnpm check-types && pnpm test` (baseline: 0 lint errors, 90 warnings max, 1209 tests).
 - RS: `cd src-tauri && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked` (baseline 373 passed).
-- SIZE: `pnpm build && pnpm size` when frontend code is added. Total client JS has about 30 kB gzip headroom; new UI goes behind `lazy()`.
+- SIZE: `pnpm build && pnpm size` when frontend code is added. Total client JS is capped at 1505 kB gzip; measure current headroom instead of relying on older estimates. New UI goes behind `lazy()`; this reduces startup loading but all lazy chunks still count toward the total.
 - Format only the files you touched (`pnpm exec biome format --write <files>`, `rustfmt <files>`). The repo does not pass a repo-wide format check; never reformat everything.
 
 ## Parallel work

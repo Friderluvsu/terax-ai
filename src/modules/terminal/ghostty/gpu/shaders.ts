@@ -175,10 +175,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
   let visible = !blinking || screen.text_blink_visible > 0.5;
   if (!visible) { return vec4f(0.0); }
   if (intrinsic_color) {
-    let color = textureSample(color_texture, glyph_sampler, input.uv);
+    let color = textureSampleLevel(color_texture, glyph_sampler, input.uv, 0.0);
     return vec4f(color.rgb, color.a * input.color.a);
   }
-  let coverage_sample = textureSample(coverage_texture, glyph_sampler, input.uv);
+  let coverage_sample = textureSampleLevel(coverage_texture, glyph_sampler, input.uv, 0.0);
   let coverage = select(coverage_sample.a, coverage_sample.r, coverage_in_red);
   return vec4f(input.color.rgb, input.color.a * coverage);
 }

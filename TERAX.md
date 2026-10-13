@@ -142,6 +142,10 @@ Resource evidence and limitations live in
 The release gates and current verification evidence are in
 `docs/architecture/ghostty-release-readiness.md`. Automated checks alone do not
 establish production readiness, platform parity, or multi-day resource stability.
+Glyph atlas sampling uses explicit mip level zero so per-glyph branches and blink
+early returns do not require implicit derivatives. WebGPU compilation and runtime
+checks on the fork's macOS WebKit are recorded in
+`docs/fork/runtime-optimization-2026-10-13.md`.
 
 ## Conventions
 
@@ -269,6 +273,7 @@ BYOK. Cloud providers via `@ai-sdk/*`: **OpenAI, Anthropic, Google, xAI, Cerebra
 
 ### Bundle config
 
+- `pnpm size` uses `.size-limit.mjs` to follow the built HTML entries, module preloads, and all static JavaScript imports. Source import checks alone cannot detect feature dependencies pulled into startup chunks by the bundler. Vite assigns initial vendor modules before feature groups so lazy AI SDKs cannot capture shared startup dependencies.
 - `bundle.targets: "all"` plus per-platform sections in `tauri.conf.json`:
   - **macOS**: `minimumSystemVersion: 13.0`.
   - **Linux**: deb depends `libwebkit2gtk-4.1-0`, `libgtk-3-0`; rpm `webkit2gtk4.1`, `gtk3`; AppImage bundles its media framework.

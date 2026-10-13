@@ -33,7 +33,7 @@ export function AgentLauncherPanel({ onBack, onLaunch }: Props) {
   const storedCommands = usePreferencesStore((s) => s.agentLaunchCommands);
   const hydrated = usePreferencesStore((s) => s.hydrated);
   const [agentId, setAgentId] = useState<AgentLauncherId>("claude");
-  const [instances, setInstances] = useState<AgentInstanceCount>(2);
+  const [instances, setInstances] = useState<AgentInstanceCount>(1);
   const [drafts, setDrafts] = useState<AgentLaunchCommands>(storedCommands);
   const hydratedRef = useRef(hydrated);
   const persistedRef = useRef(storedCommands);
