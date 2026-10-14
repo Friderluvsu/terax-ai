@@ -1,3 +1,60 @@
+> [!NOTE]
+> **This is a personal fork of [crynta/terax-ai](https://github.com/crynta/terax-ai).** It tracks upstream and adds the features listed below. Download the macOS build from [Releases](https://github.com/Friderluvsu/terax-ai/releases). The original project README follows after this section.
+
+## What this fork adds
+
+### SSH remote workspaces
+- Open a remote host from `~/.ssh/config` as its own space: terminal, file explorer, editor and search all run against the server, similar to VS Code Remote SSH.
+- Remote terminals get server-side shell integration (cwd tracking and Blocks) through small scripts in `~/.cache/terax/shell-integration` on the host. Can be turned off.
+- Files go over SFTP on the system `ssh` with a shared ControlMaster connection. Saves are atomic, keep symlinks and file modes, and detect edits made on the server (a "File changed on disk" prompt instead of silent overwrite).
+- Filename and content search on the remote host, connection status indicator with Reconnect, host key changes are refused, never auto-accepted.
+- The AI assistant is read-only in SSH workspaces: it can read, list and search, but cannot write files or run commands there.
+
+### Terminal
+- **Classic or Blocks per tab.** Choose the default for new tabs; `Cmd+T` opens the default and `Cmd+Shift+T` the other kind.
+- **Click to move the cursor** in the command line (Classic tabs). Hold Option to force it without shell integration.
+- **Option as Meta** (both or left only), so `Option+B/F/D` work as word motions while the right Option still types special characters.
+- Missing readline hotkeys added; the mouse wheel sends arrow keys in full-screen apps (`less`, `htop`).
+- **User-installed fonts**, including Nerd Fonts from `~/Library/Fonts`, load into the terminal, so prompt icons render instead of boxes. Compact names like `JetBrainsMono NF` are accepted.
+- **Notification when a long command finishes** while the window or tab is in the background (command, exit code and duration only, never output).
+- Live prompt redraw while resizing, and a fix for a blank prompt after switching tabs or spaces.
+- WebGPU glyph sampling fix.
+
+### Preview
+- **HTML files** open with Code / Split / Preview modes and live reload, served from a sandboxed `terax-preview://` protocol scoped to the project.
+- **SVG preview** and an "Open Preview" item in the explorer context menu.
+- Markdown preview reloads live and no longer opens duplicate tabs.
+
+### Editor and files
+- **Untitled tabs** (`Cmd+E`, or Editor in the new tab menu) hot-save to scratch storage and survive restarts; Save As writes them to a real file.
+- `.command` and `.tool` scripts opened from Finder run in a terminal tab (Terax can be the default app for them).
+- CodeMirror owns `Cmd+D`, `Cmd+[`, `Cmd+]` and `Cmd+G` inside the editor.
+
+### Security and packaging
+- The secret-path deny-list (`.env*`, `.ssh/`, credentials, keychains) is also enforced in Rust, not only in the AI tool layer.
+- Separate identity `dev.terax.fork`, built-in updater disabled, so the fork never replaces itself with an upstream release.
+- All fork options live in **Settings > Fork**.
+
+### Install the fork (macOS, Apple Silicon)
+
+1. Download `Terax-<version>-arm64.dmg` from [Releases](https://github.com/Friderluvsu/terax-ai/releases) and drag Terax to Applications.
+2. The build is ad-hoc signed, not notarized. On first launch macOS blocks it: open **System Settings > Privacy & Security** and press **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Terax.app`.
+
+The app is named `Terax.app`, like upstream. Rename or remove the stock Terax first if you have it installed.
+
+### Build the fork from source
+
+```bash
+source scripts/fork/agent-env.sh
+pnpm install
+pnpm fork:dev        # development app
+pnpm fork:release    # Terax.app + release/Terax-<version>-<arch>.dmg
+```
+
+Fork rules and gates are in [FORK.md](FORK.md); the architecture doc is [TERAX.md](TERAX.md).
+
+---
+
 <div align="center">
   <img src="public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
