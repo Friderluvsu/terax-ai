@@ -6,7 +6,8 @@ Personal fork of crynta/terax-ai. TERAX.md is the architecture doc and quality b
 
 - Run `source scripts/fork/agent-env.sh` before any node, pnpm or cargo command. The user's shell defines lazy nvm functions that recurse in tool shells, and the default node is too old.
 - `ls` is aliased to eza with icon glyphs; use `/bin/ls`, `find` or `rg`.
-- Dev app: `pnpm fork:dev` (once E0-T03 lands; until then `pnpm tauri dev --config '{"identifier":"app.crynta.terax.dev"}'`). Port 1420 is strict: one dev app at a time.
+- Dev app: `pnpm fork:dev`. Port 1420 is strict: one dev app at a time.
+- Release build: `pnpm fork:release` (add `-- --install` to copy into /Applications). The DMG lands in `release/Terax-<version>-<arch>.dmg` (gitignored).
 - Stop an orphaned dev binary by path only: `pkill -f target/debug/terax`. Never `pkill -x terax`: it kills the user's installed Terax.
 
 ## Gates and baseline

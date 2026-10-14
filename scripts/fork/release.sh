@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Build the fork as "Terax.app" (identifier dev.terax.fork) with ad-hoc signing.
-# `--install` copies it to /Applications, refusing to overwrite a different app
-# (for example the stock Terax, identifier app.crynta.terax).
+# Build the fork as "Terax.app" (identifier dev.terax.fork) with ad-hoc signing
+# and package it as release/Terax-<version>-<arch>.dmg.
+# `--install` also copies it to /Applications, refusing to overwrite a different
+# app (for example the stock Terax, identifier app.crynta.terax).
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -29,6 +30,17 @@ codesign --force --sign - "$bundle/Contents/MacOS/terax-cli"
 codesign --force --sign - --entitlements "$repo/src-tauri/entitlements.plist" "$bundle"
 codesign --verify --deep --strict "$bundle"
 
+version="$(node -p "require('./package.json').version")"
+out_dir="$repo/release"
+dmg="$out_dir/Terax-$version-$(uname -m).dmg"
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+ditto "$bundle" "$stage/$app_name"
+ln -s /Applications "$stage/Applications"
+mkdir -p "$out_dir"
+rm -f "$dmg"
+hdiutil create -quiet -volname "Terax" -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
+
 if [ "$install" -eq 1 ]; then
   dest="/Applications/$app_name"
   if [ -d "$dest" ]; then
@@ -46,3 +58,4 @@ if [ "$install" -eq 1 ]; then
 fi
 
 echo "bundle: $bundle ($(du -sh "$bundle" | cut -f1))"
+echo "dmg: $dmg ($(du -sh "$dmg" | cut -f1))"
