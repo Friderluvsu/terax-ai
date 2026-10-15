@@ -24,6 +24,8 @@ Personal fork of crynta/terax-ai. TERAX.md is the architecture doc and quality b
 
 ## Fork conventions
 
+- Do not add AI co-author trailers or generated-by signatures to commits or documentation.
+
 - Fork code goes into new modules (`src-tauri/src/modules/remote/*`, `src/modules/remote/*`, `src/modules/html-preview/*`, ...); edits to hot upstream files (App.tsx, useTabs.ts, settings/store.ts, lib.rs, useGhosttyTerminalSession.ts) stay minimal.
 - Fork preferences live in `src/modules/settings/store.ts` and are shown in the Fork settings section.
 - Upstream sync: `git fetch upstream && git merge upstream/main` into `fork/main`, then run all gates.

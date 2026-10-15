@@ -1,40 +1,37 @@
 <div align="center">
   <img src="public/logo.png" width="112" height="112" alt="Terax" />
-  <h1>Terax: personal fork</h1>
+  <h1>Terax</h1>
   <p>Terminal, editor, SSH workspaces and AI in one desktop app.</p>
 </div>
 
-This is a personal fork of [crynta/terax-ai](https://github.com/crynta/terax-ai). It uses Tauri 2 and Rust for native operations, React and TypeScript for the interface, and Ghostty WASM with WebGPU and a WebGL fallback for the terminal. AI uses your own provider keys or local models.
+Terax is a desktop development workspace with a terminal, code editor, SSH connections, Git and AI. It uses Tauri 2 and Rust for native operations, React and TypeScript for the interface, and Ghostty WASM with WebGPU and a WebGL fallback for the terminal. AI uses your own provider keys or local models.
 
-[Русский гид](docs/fork/README.md) · [Documentation](docs/README.md) · [Fork releases](https://github.com/Friderluvsu/terax-ai/releases)
+[Русский гид](docs/fork/README.md) · [Documentation](docs/README.md) · [Source](https://github.com/Friderluvsu/terax-ai)
 
-## Install (macOS, Apple Silicon)
-
-1. Download `Terax-<version>-arm64.dmg` from [fork releases](https://github.com/Friderluvsu/terax-ai/releases) and drag Terax to Applications.
-2. The build is ad-hoc signed and is not notarized. If macOS blocks the first launch, use **System Settings > Privacy & Security > Open Anyway**.
-
-The app is named `Terax.app`, like upstream. Move an existing upstream installation aside before installing this fork. The fork has a separate identity, `dev.terax.fork`, and its built-in updater is disabled. This fork's release script packages macOS builds; upstream platform notes are preserved in the [upstream README](docs/upstream/README.md).
-
-## Development
+## Build and install (macOS)
 
 Requires Node 22+, pnpm, stable Rust and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform. Run from the repository root:
 
 ```bash
 source scripts/fork/agent-env.sh
 pnpm install --frozen-lockfile
-pnpm fork:dev
-```
-
-Build a signed `Terax.app` and a DMG in `release/`:
-
-```bash
-source scripts/fork/agent-env.sh
 pnpm fork:release
 ```
 
-`pnpm fork:release -- --install` also installs the build into `/Applications`. Command details and diagnostics are in the [scripts guide](scripts/README.md); development rules and checks are in [FORK.md](FORK.md).
+The build creates `Terax.app` and `release/Terax-<version>-<arch>.dmg`. Open the DMG and drag the app to Applications, or use `pnpm fork:release -- --install` to build and install it directly.
 
-## What this fork adds
+The macOS build is ad-hoc signed and is not notarized. If macOS blocks the first launch, use **System Settings > Privacy & Security > Open Anyway**.
+
+## Development
+
+```bash
+source scripts/fork/agent-env.sh
+pnpm fork:dev
+```
+
+Command details and diagnostics are in the [scripts guide](scripts/README.md); repository workflow and checks are in [FORK.md](FORK.md).
+
+## Features
 
 ### SSH remote workspaces
 
@@ -51,29 +48,35 @@ pnpm fork:release
 - **Classic or Blocks per tab.** Choose the default for new tabs; `Cmd+T` opens the default and `Cmd+Shift+T` the other kind.
 - **Click to move the cursor** in the command line (Classic tabs). Hold Option to force it without shell integration.
 - **Option as Meta** (both or left only), so `Option+B/F/D` work as word motions while the right Option still types special characters.
-- Missing readline hotkeys added; the mouse wheel sends arrow keys in full-screen apps (`less`, `htop`).
+- Readline shortcuts and mouse-wheel navigation in full-screen apps (`less`, `htop`).
 - **User-installed fonts**, including Nerd Fonts from `~/Library/Fonts`, load into the terminal, so prompt icons render instead of boxes. Compact names like `JetBrainsMono NF` are accepted.
 - **Notification when a long command finishes** while the window or tab is in the background (command, exit code and duration only, never output).
-- Live prompt redraw while resizing, and a fix for a blank prompt after switching tabs or spaces.
-- WebGPU glyph sampling fix.
+- Live prompt redraw while resizing and switching tabs or spaces.
+- Ghostty WASM with WebGPU rendering and an on-demand WebGL fallback.
 
 ### Preview
 
 - **HTML files** open with Code / Split / Preview modes and live reload, served from a sandboxed `terax-preview://` protocol scoped to the project.
 - **SVG preview** and an "Open Preview" item in the explorer context menu.
-- Markdown preview reloads live and no longer opens duplicate tabs.
+- Markdown preview with live reload.
 
 ### Editor and files
 
 - **Untitled tabs** (`Cmd+E`, or Editor in the new tab menu) hot-save to scratch storage and survive restarts; Save As writes them to a real file.
 - `.command` and `.tool` scripts opened from Finder run in a terminal tab (Terax can be the default app for them).
-- CodeMirror owns `Cmd+D`, `Cmd+[`, `Cmd+]` and `Cmd+G` inside the editor.
+- CodeMirror editing, search and multi-cursor shortcuts, including `Cmd+D`, `Cmd+[`, `Cmd+]` and `Cmd+G`.
+
+### AI and Git
+
+- Use your own AI provider keys or local models, with file context and approval for file changes and shell commands.
+- Launch coding agents in terminal panes and receive attention and completion notifications.
+- Review diffs, stage changes, commit and browse Git history inside the workspace.
 
 ### Security and packaging
 
 - The secret-path deny-list (`.env*`, `.ssh/`, credentials, keychains) is also enforced in Rust, not only in the AI tool layer.
-- Separate identity `dev.terax.fork`, built-in updater disabled, so the fork never replaces itself with an upstream release.
-- All fork options live in **Settings > Fork**.
+- Application identity `dev.terax.fork`; updates are installed manually.
+- Additional preferences are grouped under **Settings > Fork**.
 
 ## Size budgets
 
@@ -90,15 +93,19 @@ Run `pnpm build` followed by `pnpm size` after loading the environment above. Se
 | [packages/ghostty-core/](packages/ghostty-core/) | Adapted Ghostty terminal core and WASM artifacts |
 | [public/](public/) | Application assets |
 | [scripts/](scripts/README.md) | Build, release and performance tools |
-| [docs/](docs/README.md) | Architecture, fork guides, validation reports and screenshots |
+| [docs/](docs/README.md) | Architecture, user guides, validation reports and screenshots |
 | [fork-plan/](fork-plan/README.md) | Original task cards and implementation research |
 | [TERAX.md](TERAX.md) | Living architecture reference and quality bar |
-| [FORK.md](FORK.md) | Fork workflow, environment and verification rules |
+| [FORK.md](FORK.md) | Repository workflow, environment and verification rules |
 
 `dist/`, `node_modules/`, `src-tauri/target/` and `release/` are generated local directories. They are ignored by Git; their disk usage is separate from the shipped application's size.
 
-## Contributing and upstream
+## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [FORK.md](FORK.md) and the [testing guide](docs/contributing/testing.md) before changing code. The [original upstream README](docs/upstream/README.md) and its [translations](docs/readme/README.md) are preserved as reference material.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [FORK.md](FORK.md) and the [testing guide](docs/contributing/testing.md) before changing code.
 
-Licensed under [Apache-2.0](LICENSE). The fork retains upstream attribution and bundled dependency notices.
+## Credits and license
+
+This project is a fork of [crynta/terax-ai](https://github.com/crynta/terax-ai), developed in [Friderluvsu/terax-ai](https://github.com/Friderluvsu/terax-ai). Original project documentation is preserved in the [upstream archive](docs/upstream/README.md).
+
+Licensed under [Apache-2.0](LICENSE). Original authorship and bundled dependency notices are retained.

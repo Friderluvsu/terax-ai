@@ -9,7 +9,6 @@ export const meta = {
 }
 
 const REPO = '/Users/frider/Documents/iamcoder/terax_claude'
-const TRAILER = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 
 const IMPL_SCHEMA = {
   type: 'object',
@@ -56,7 +55,7 @@ Your task card: run \`sed -n '/^#### ${t.id} /,/^#### /p' fork-plan/PLAN.md\` an
 ${t.note ? `Integrator note: ${t.note}\n` : ''}Rules: follow TERAX.md and FORK.md (already in your context). Stay inside the card's scope. No em-dash, no emojis, minimal comments, '@/' imports. Format only files you touched: \`rustfmt <file>\` and \`pnpm exec biome format --write <file>\`; NEVER run \`cargo fmt\`, \`npx prettier\` or a formatter on directories. Before committing run \`git status --short\` and commit only files your card needs (no backup files such as *-E or *.orig, no unrelated formatting).
 Finish:
 - Run the gates the card lists. Lint must stay at 0 errors and at most 90 warnings. If a gate fails because of a pre-existing issue unrelated to your change, say so explicitly in gates.
-- Commit everything in one commit titled "${t.id}: <short title>" whose message ends with the line: ${TRAILER}
+- Commit everything in one commit titled "${t.id}: <short title>" without AI co-author trailers or generated-by signatures
 - Then release the branch: ${t.isolation === 'worktree' ? '`git switch --detach`' : '`git switch fork/main` and confirm `git status --short` is clean apart from untracked fork-plan/raw and fork-plan/research'}.
 - If you cannot complete the card, commit nothing broken, set status "blocked" and explain.
 Return the structured result.`
@@ -71,7 +70,7 @@ Setup: \`source scripts/fork/agent-env.sh\`; \`git switch task/${t.id}\`; ${carg
 Card for context: \`sed -n '/^#### ${t.id} /,/^#### /p' fork-plan/PLAN.md\`.
 Fix exactly these findings (critical/major), nothing else:
 ${JSON.stringify(findings, null, 1)}
-Run the card's gates, commit "${t.id}: address review" ending with the line ${TRAILER}, then release the branch (${t.isolation === 'worktree' ? '`git switch --detach`' : '`git switch fork/main`'}). Return the structured result.`
+Run the card's gates, commit "${t.id}: address review" without AI co-author trailers or generated-by signatures, then release the branch (${t.isolation === 'worktree' ? '`git switch --detach`' : '`git switch fork/main`'}). Return the structured result.`
 
 const run = (t) => {
   const opts = (phase, label) => ({ label, phase, model: t.model, effort: t.effort, schema: IMPL_SCHEMA, ...(t.isolation === 'worktree' ? { isolation: 'worktree' } : {}) })

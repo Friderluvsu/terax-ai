@@ -4,40 +4,36 @@ Terax runs shells, reads/writes files, and talks to AI providers, so security bu
 
 ## Reporting
 
-Email **security@terax.app**. Include:
+Check [this repository's Security tab](https://github.com/Friderluvsu/terax-ai/security) for private vulnerability reporting options. If private reporting is unavailable, contact [the maintainer](https://github.com/Friderluvsu) privately to agree on a reporting channel before sharing exploit details. Include:
 
 - What the issue is and what it lets an attacker do
 - Steps to reproduce (a small PoC is great)
 - Version, OS, arch
 
-We'll get back to you within a few days. Once it's fixed, we'll credit you in the release notes - unless you'd rather stay anonymous.
-
 Please **don't** open a public GitHub issue for security reports.
 
 ## Supported versions
 
-Until `1.0.0`, only the latest minor gets security fixes. See the current version in `package.json` or on the [Releases page](https://github.com/crynta/terax-ai/releases). 
+Development and fixes target the current code in this repository. See the current version in [package.json](package.json).
 
 ## What's in scope
 
 - The Rust backend in `src-tauri/` (PTY, FS, IPC, plugins)
 - The frontend in `src/` - anywhere untrusted input lands (terminal output, file content, AI tool results, credentials)
-- Release artifacts on GitHub and `terax.app`
-- The auto-updater
+- Locally built application bundles and packaging scripts
 
 ## What's not
 
-- Bugs in upstream deps (Tauri, xterm.js, CodeMirror, AI SDKs…) - report those upstream. We'll ship the fix once it's released.
+- Bugs in upstream dependencies (Tauri, Ghostty, CodeMirror, AI SDKs) - report those upstream as well.
 - Anything that needs an already-compromised machine or a local attacker with shell access
-- Older versions (`< 0.5`)
 
 ## What we do to keep things safe
 
 - **API keys** live in the OS keychain via `keyring` - not on disk, not in `localStorage`, not in logs.
-- **No telemetry.** Terax only talks to the network when you ask it to (AI requests, update checks, web preview).
+- **No telemetry.** Network features include AI requests, SSH workspaces and web preview.
 - **AI tool approval.** File writes and shell commands from the agent need your OK before they run.
 - **No Node in the renderer.** The frontend only reaches the host through the allow-listed Tauri commands.
-- **Signed releases.** Updates are verified before they're applied.
+- **Manual updates.** The built-in updater is disabled for this application identity. Local macOS builds are ad-hoc signed and are not notarized.
 
 ## What we can't promise
 
