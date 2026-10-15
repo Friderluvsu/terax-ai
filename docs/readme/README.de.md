@@ -1,3 +1,6 @@
+> [!NOTE]
+> Upstream translation preserved for reference. For current fork features and installation, see the [fork README](../../README.md) or [Russian fork guide](../fork/README.md).
+
 <div align="center">
   <img src="../../public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
@@ -20,7 +23,7 @@
 </div>
 
 <p align="center">
-  <a href="../../README.md">English</a> |
+  <a href="../upstream/README.md">English</a> |
   <a href="README.zh-CN.md">简体中文</a> |
   <a href="README.es.md">Español</a> |
   <a href="README.fr.md">Français</a> |
@@ -41,15 +44,15 @@ Terax ist eine leichtgewichtige, quelloffene, terminalorientierte und KI-native 
 
 <table>
   <tr>
-    <td align="center"><img src="../web-preview.png" alt="Webvorschau" /><br/><sub>Webvorschau lokaler Entwicklungsserver</sub></td>
-    <td align="center"><img src="../ai-workflow.png" alt="KI-Fenster" /><br/><sub>Agentischer KI-Workflow mit Bearbeitungs-Diffs im Code-Editor</sub></td>
+    <td align="center"><img src="../assets/screenshots/web-preview.png" alt="Webvorschau" /><br/><sub>Webvorschau lokaler Entwicklungsserver</sub></td>
+    <td align="center"><img src="../assets/screenshots/ai-workflow.png" alt="KI-Fenster" /><br/><sub>Agentischer KI-Workflow mit Bearbeitungs-Diffs im Code-Editor</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../themes.png" alt="Themes und Hintergrundbild" style="margin-top: 12px;"/><br/><sub>Eigene Themes, Voreinstellungen und Hintergrundbilder</sub></td>
-    <td align="center"><img src="../source-control.png" alt="Quellcodeverwaltung und Git-Graph" style="margin-top: 12px;"/><br/><sub>Quellcodeverwaltung mit Git-Graph im Verlauf</sub></td>
+    <td align="center"><img src="../assets/screenshots/themes.png" alt="Themes und Hintergrundbild" style="margin-top: 12px;"/><br/><sub>Eigene Themes, Voreinstellungen und Hintergrundbilder</sub></td>
+    <td align="center"><img src="../assets/screenshots/source-control.png" alt="Quellcodeverwaltung und Git-Graph" style="margin-top: 12px;"/><br/><sub>Quellcodeverwaltung mit Git-Graph im Verlauf</sub></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="../terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Blockbasiertes WebGL-Terminal mit editorähnlichem Eingabebereich</sub></td>
+    <td colspan="2" align="center"><img src="../assets/screenshots/terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Blockbasiertes WebGL-Terminal mit editorähnlichem Eingabebereich</sub></td>
   </tr>
 </table>
 

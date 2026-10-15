@@ -1,6 +1,6 @@
 # FORK.md
 
-Personal fork of crynta/terax-ai. TERAX.md is the architecture doc and quality bar; this file adds fork rules. The work plan is `fork-plan/PLAN.md` (task cards, waves, model per task).
+Personal fork of crynta/terax-ai. TERAX.md is the architecture doc and quality bar; this file adds fork rules. The original task cards are in `fork-plan/PLAN.md`; read [the plan index](fork-plan/README.md) for their historical scope. Current fork guides and validation reports are indexed in [docs/fork/README.md](docs/fork/README.md), and maintained commands in [scripts/README.md](scripts/README.md).
 
 ## Environment
 

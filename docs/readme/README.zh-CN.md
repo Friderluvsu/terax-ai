@@ -1,3 +1,6 @@
+> [!NOTE]
+> Upstream translation preserved for reference. For current fork features and installation, see the [fork README](../../README.md) or [Russian fork guide](../fork/README.md).
+
 <div align="center">
   <img src="../../public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
@@ -22,7 +25,7 @@
 </div>
 
 <p align="center">
-  <a href="../../README.md">English</a> |
+  <a href="../upstream/README.md">English</a> |
   <a href="README.es.md">Español</a> |
   <a href="README.de.md">Deutsch</a> |
   <a href="README.fr.md">Français</a> |
@@ -43,15 +46,15 @@ Terax 是一个轻量、开源、终端优先的 AI 原生开发环境（ADE）�
 
 <table>
   <tr>
-    <td align="center"><img src="../web-preview.png" alt="网页预览" /><br/><sub>本地开发服务器网页预览</sub></td>
-    <td align="center"><img src="../ai-workflow.png" alt="AI 窗口" /><br/><sub>在代码编辑器中显示编辑差异的智能体 AI 工作流</sub></td>
+    <td align="center"><img src="../assets/screenshots/web-preview.png" alt="网页预览" /><br/><sub>本地开发服务器网页预览</sub></td>
+    <td align="center"><img src="../assets/screenshots/ai-workflow.png" alt="AI 窗口" /><br/><sub>在代码编辑器中显示编辑差异的智能体 AI 工作流</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../themes.png" alt="主题和背景图" style="margin-top: 12px;"/><br/><sub>自定义主题、预设和背景图</sub></td>
-    <td align="center"><img src="../source-control.png" alt="源代码管理和 Git 图" style="margin-top: 12px;"/><br/><sub>带历史 Git 图的源代码管理面板</sub></td>
+    <td align="center"><img src="../assets/screenshots/themes.png" alt="主题和背景图" style="margin-top: 12px;"/><br/><sub>自定义主题、预设和背景图</sub></td>
+    <td align="center"><img src="../assets/screenshots/source-control.png" alt="源代码管理和 Git 图" style="margin-top: 12px;"/><br/><sub>带历史 Git 图的源代码管理面板</sub></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="../terminal.png" alt="终端" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>基于块的 WebGL 终端，配有类似编辑器的输入面板</sub></td>
+    <td colspan="2" align="center"><img src="../assets/screenshots/terminal.png" alt="终端" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>基于块的 WebGL 终端，配有类似编辑器的输入面板</sub></td>
   </tr>
 </table>
 

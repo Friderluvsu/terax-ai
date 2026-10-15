@@ -1,3 +1,6 @@
+> [!NOTE]
+> Upstream translation preserved for reference. For current fork features and installation, see the [fork README](../../README.md) or [Russian fork guide](../fork/README.md).
+
 <div align="center">
   <img src="../../public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
@@ -20,7 +23,7 @@
 </div>
 
 <p align="center">
-  <a href="../../README.md">English</a> |
+  <a href="../upstream/README.md">English</a> |
   <a href="README.zh-CN.md">简体中文</a> |
   <a href="README.de.md">Deutsch</a> |
   <a href="README.fr.md">Français</a> |
@@ -41,15 +44,15 @@ Terax es un entorno de desarrollo (ADE) ligero, de código abierto, centrado en 
 
 <table>
   <tr>
-    <td align="center"><img src="../web-preview.png" alt="Vista previa web" /><br/><sub>Vista previa web de servidores de desarrollo locales</sub></td>
-    <td align="center"><img src="../ai-workflow.png" alt="Ventana de IA" /><br/><sub>Flujo de trabajo de IA con agentes y diferencias de edición en el editor</sub></td>
+    <td align="center"><img src="../assets/screenshots/web-preview.png" alt="Vista previa web" /><br/><sub>Vista previa web de servidores de desarrollo locales</sub></td>
+    <td align="center"><img src="../assets/screenshots/ai-workflow.png" alt="Ventana de IA" /><br/><sub>Flujo de trabajo de IA con agentes y diferencias de edición en el editor</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="../themes.png" alt="Temas e imagen de fondo" style="margin-top: 12px;"/><br/><sub>Temas personalizados, preajustes e imágenes de fondo</sub></td>
-    <td align="center"><img src="../source-control.png" alt="Control de código fuente y gráfico de Git" style="margin-top: 12px;"/><br/><sub>Panel de control de código fuente con gráfico de Git en el historial</sub></td>
+    <td align="center"><img src="../assets/screenshots/themes.png" alt="Temas e imagen de fondo" style="margin-top: 12px;"/><br/><sub>Temas personalizados, preajustes e imágenes de fondo</sub></td>
+    <td align="center"><img src="../assets/screenshots/source-control.png" alt="Control de código fuente y gráfico de Git" style="margin-top: 12px;"/><br/><sub>Panel de control de código fuente con gráfico de Git en el historial</sub></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="../terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Terminal WebGL por bloques con panel de entrada similar a un editor</sub></td>
+    <td colspan="2" align="center"><img src="../assets/screenshots/terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Terminal WebGL por bloques con panel de entrada similar a un editor</sub></td>
   </tr>
 </table>
 

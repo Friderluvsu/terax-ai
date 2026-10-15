@@ -1,3 +1,6 @@
+> [!NOTE]
+> Upstream translation preserved for reference. For current fork features and installation, see the [fork README](../../README.md) or [Russian fork guide](../fork/README.md).
+
 <div align="center">
   <img src="../../public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
@@ -14,7 +17,7 @@
 </div>
 
 <p align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.id.md">Bahasa Indonesia</a> | <a href="README.hi.md">हिन्दी</a>
+  <a href="../upstream/README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.id.md">Bahasa Indonesia</a> | <a href="README.hi.md">हिन्दी</a>
 </p>
 
 ---
@@ -24,9 +27,9 @@ Terax est un environnement de développement (ADE) léger, open source, axé sur
 ## Captures d'écran
 
 <table>
-  <tr><td align="center"><img src="../web-preview.png" alt="Aperçu web" /><br/><sub>Aperçu web des serveurs de développement locaux</sub></td><td align="center"><img src="../ai-workflow.png" alt="Fenêtre IA" /><br/><sub>Flux de travail d'IA agentique avec diffs dans l'éditeur de code</sub></td></tr>
-  <tr><td align="center"><img src="../themes.png" alt="Thèmes et image de fond" style="margin-top: 12px;"/><br/><sub>Thèmes personnalisés, préréglages et images de fond</sub></td><td align="center"><img src="../source-control.png" alt="Gestion de sources et graphe Git" style="margin-top: 12px;"/><br/><sub>Panneau de gestion de sources avec graphe Git dans l'historique</sub></td></tr>
-  <tr><td colspan="2" align="center"><img src="../terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Terminal WebGL par blocs avec panneau de saisie proche d'un éditeur</sub></td></tr>
+  <tr><td align="center"><img src="../assets/screenshots/web-preview.png" alt="Aperçu web" /><br/><sub>Aperçu web des serveurs de développement locaux</sub></td><td align="center"><img src="../assets/screenshots/ai-workflow.png" alt="Fenêtre IA" /><br/><sub>Flux de travail d'IA agentique avec diffs dans l'éditeur de code</sub></td></tr>
+  <tr><td align="center"><img src="../assets/screenshots/themes.png" alt="Thèmes et image de fond" style="margin-top: 12px;"/><br/><sub>Thèmes personnalisés, préréglages et images de fond</sub></td><td align="center"><img src="../assets/screenshots/source-control.png" alt="Gestion de sources et graphe Git" style="margin-top: 12px;"/><br/><sub>Panneau de gestion de sources avec graphe Git dans l'historique</sub></td></tr>
+  <tr><td colspan="2" align="center"><img src="../assets/screenshots/terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Terminal WebGL par blocs avec panneau de saisie proche d'un éditeur</sub></td></tr>
 </table>
 
 ## Fonctionnalités

@@ -1,3 +1,6 @@
+> [!NOTE]
+> Upstream translation preserved for reference. For current fork features and installation, see the [fork README](../../README.md) or [Russian fork guide](../fork/README.md).
+
 <div align="center">
   <img src="../../public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
@@ -14,7 +17,7 @@
 </div>
 
 <p align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.fr.md">Français</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.hi.md">हिन्दी</a>
+  <a href="../upstream/README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.fr.md">Français</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.hi.md">हिन्दी</a>
 </p>
 
 ---
@@ -24,9 +27,9 @@ Terax adalah lingkungan pengembangan (ADE) ringan, sumber terbuka, berfokus pada
 ## Tangkapan layar
 
 <table>
-  <tr><td align="center"><img src="../web-preview.png" alt="Pratinjau web" /><br/><sub>Pratinjau web server pengembangan lokal</sub></td><td align="center"><img src="../ai-workflow.png" alt="Jendela AI" /><br/><sub>Alur kerja AI berbasis agen dengan diff penyuntingan di editor kode</sub></td></tr>
-  <tr><td align="center"><img src="../themes.png" alt="Tema dan gambar latar" style="margin-top: 12px;"/><br/><sub>Tema kustom, preset, dan gambar latar</sub></td><td align="center"><img src="../source-control.png" alt="Kontrol sumber dan grafik Git" style="margin-top: 12px;"/><br/><sub>Panel kontrol sumber dengan grafik Git dalam riwayat</sub></td></tr>
-  <tr><td colspan="2" align="center"><img src="../terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Terminal WebGL berbasis blok dengan panel masukan seperti editor</sub></td></tr>
+  <tr><td align="center"><img src="../assets/screenshots/web-preview.png" alt="Pratinjau web" /><br/><sub>Pratinjau web server pengembangan lokal</sub></td><td align="center"><img src="../assets/screenshots/ai-workflow.png" alt="Jendela AI" /><br/><sub>Alur kerja AI berbasis agen dengan diff penyuntingan di editor kode</sub></td></tr>
+  <tr><td align="center"><img src="../assets/screenshots/themes.png" alt="Tema dan gambar latar" style="margin-top: 12px;"/><br/><sub>Tema kustom, preset, dan gambar latar</sub></td><td align="center"><img src="../assets/screenshots/source-control.png" alt="Kontrol sumber dan grafik Git" style="margin-top: 12px;"/><br/><sub>Panel kontrol sumber dengan grafik Git dalam riwayat</sub></td></tr>
+  <tr><td colspan="2" align="center"><img src="../assets/screenshots/terminal.png" alt="Terminal" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>Terminal WebGL berbasis blok dengan panel masukan seperti editor</sub></td></tr>
 </table>
 
 ## Fitur

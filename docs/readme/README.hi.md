@@ -1,3 +1,6 @@
+> [!NOTE]
+> Upstream translation preserved for reference. For current fork features and installation, see the [fork README](../../README.md) or [Russian fork guide](../fork/README.md).
+
 <div align="center">
   <img src="../../public/logo.png" width="144" height="144" alt="Terax" />
   <h1>Terax</h1>
@@ -14,7 +17,7 @@
 </div>
 
 <p align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.fr.md">Français</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.id.md">Bahasa Indonesia</a>
+  <a href="../upstream/README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.fr.md">Français</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.id.md">Bahasa Indonesia</a>
 </p>
 
 ---
@@ -24,9 +27,9 @@ Terax एक हल्का, ओपन-सोर्स, टर्मिनल-�
 ## स्क्रीनशॉट
 
 <table>
-  <tr><td align="center"><img src="../web-preview.png" alt="वेब प्रीव्यू" /><br/><sub>स्थानीय डेवलपमेंट सर्वर का वेब प्रीव्यू</sub></td><td align="center"><img src="../ai-workflow.png" alt="AI विंडो" /><br/><sub>कोड एडिटर में एडिट डिफ़ के साथ एजेंटिक AI वर्कफ़्लो</sub></td></tr>
-  <tr><td align="center"><img src="../themes.png" alt="थीम और बैकग्राउंड" style="margin-top: 12px;"/><br/><sub>कस्टम थीम, प्रीसेट और बैकग्राउंड इमेज</sub></td><td align="center"><img src="../source-control.png" alt="सोर्स कंट्रोल और Git ग्राफ़" style="margin-top: 12px;"/><br/><sub>इतिहास में Git ग्राफ़ वाला सोर्स कंट्रोल पैनल</sub></td></tr>
-  <tr><td colspan="2" align="center"><img src="../terminal.png" alt="टर्मिनल" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>एडिटर जैसे इनपुट पैनल वाला ब्लॉक-आधारित WebGL टर्मिनल</sub></td></tr>
+  <tr><td align="center"><img src="../assets/screenshots/web-preview.png" alt="वेब प्रीव्यू" /><br/><sub>स्थानीय डेवलपमेंट सर्वर का वेब प्रीव्यू</sub></td><td align="center"><img src="../assets/screenshots/ai-workflow.png" alt="AI विंडो" /><br/><sub>कोड एडिटर में एडिट डिफ़ के साथ एजेंटिक AI वर्कफ़्लो</sub></td></tr>
+  <tr><td align="center"><img src="../assets/screenshots/themes.png" alt="थीम और बैकग्राउंड" style="margin-top: 12px;"/><br/><sub>कस्टम थीम, प्रीसेट और बैकग्राउंड इमेज</sub></td><td align="center"><img src="../assets/screenshots/source-control.png" alt="सोर्स कंट्रोल और Git ग्राफ़" style="margin-top: 12px;"/><br/><sub>इतिहास में Git ग्राफ़ वाला सोर्स कंट्रोल पैनल</sub></td></tr>
+  <tr><td colspan="2" align="center"><img src="../assets/screenshots/terminal.png" alt="टर्मिनल" style="border-radius: 4px; margin-top: 12px;" /><br/><sub>एडिटर जैसे इनपुट पैनल वाला ब्लॉक-आधारित WebGL टर्मिनल</sub></td></tr>
 </table>
 
 ## सुविधाएँ

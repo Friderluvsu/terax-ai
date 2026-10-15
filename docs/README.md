@@ -1,4 +1,4 @@
-# Terax contributor documentation
+# Terax documentation
 
 This directory holds long-form contributor and maintainer guides. `TERAX.md` at the repo root is the living architecture doc and the source of truth; these guides elaborate on specific areas without duplicating it.
 
@@ -6,8 +6,19 @@ If a guide conflicts with `TERAX.md`, `TERAX.md` wins.
 
 ## Getting started
 
+- [Main README](../README.md) - fork features, installation, development and repository map
+- [Russian fork guide](fork/README.md) - daily usage, size budgets and validation reports
 - [TERAX.md](../TERAX.md) - the architecture source of truth; read this first
+- [FORK.md](../FORK.md) - fork environment, workflow and quality gates
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - how to contribute, quality bar, project layout
+- [Build and diagnostic commands](../scripts/README.md) - development, packaging, checks and performance tools
+
+## Fork guides and verification
+
+- [Size and architecture](fork/size-and-architecture.md) - how the app is built, what the size budgets mean, and startup optimization
+- [Runtime optimization, 2026-10-13](fork/runtime-optimization-2026-10-13.md) - application checks, WebGPU fix, resource measurements and installation
+- [Terminal link clicks, 2026-10-15](fork/terminal-link-clicks.md) - pointer handling, regression coverage and browser verification
+- [SSH QA](fork/ssh-qa.md) - remote workspace validation scenarios
 
 ## Architecture guides
 
@@ -35,3 +46,11 @@ repository and are not included in the application bundle.
 ## Contributing guides
 
 - [Testing](contributing/testing.md) - the testing contract, how to run checks, and what makes a good core-subsystem test.
+
+## Reference material and assets
+
+- [Original fork plan and research](../fork-plan/README.md) - task cards and historical implementation context
+- [Upstream README snapshot](upstream/README.md) and [translations](readme/README.md) - preserved upstream descriptions, not current fork instructions
+- [Screenshots](assets/screenshots/) - images shared by the upstream README and translations
+
+Keep architecture explanations in `architecture/`, fork behavior and validation in `fork/`, contribution instructions in `contributing/`, and documentation images in `assets/`. Generated builds belong in the ignored output directories described in the main README.
