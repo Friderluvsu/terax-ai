@@ -95,6 +95,9 @@ output. Accessible text is limited to 256 rows / 64 KiB and refreshes at most fo
 times per second while visible. Ordinary URL detection runs on pointer demand;
 OSC 8 links take precedence. OSC 52 side effects retain one in-flight write and
 only the latest pending value across the window.
+Terminal links activate through the selection controller's pointer-click callback;
+they do not rely on compatibility mouse events suppressed by text selection.
+Dragging a URL selects text, while a plain output click opens the system browser.
 
 The adapted Ghostty revision is pinned in `packages/ghostty-core/adapted/UPSTREAM.md`.
 Both SIMD and scalar artifacts are shipped; the loader fetches only the variant

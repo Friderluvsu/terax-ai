@@ -1,3 +1,4 @@
+import { handleTerminalCellClick } from "@/modules/terminal/ghostty/core/terminalCellClick";
 import { terminalWindowFocused } from "@/modules/terminal/ghostty/renderScheduling";
 import { bindTerminalInteraction } from "@/modules/terminal/ghostty/input/terminalInteraction";
 import { TerminalScrollbarSync } from "@/modules/terminal/ghostty/gpu/terminalScrollbar";
@@ -174,7 +175,6 @@ export class WebGpuTerminalSurface
   private contentRevision: number;
   private hoveredCell = -1;
   private hoveredLink: string | null = null;
-  private mouseDownLink: string | null = null;
   private applyingFit = false;
   private disposed = false;
 
@@ -228,7 +228,8 @@ export class WebGpuTerminalSurface
         if (this.applyingFit) return;
         this.runtime.schedule(this);
       },
-      onClick: (cell, event) => this.options.onCellClick?.(cell, event),
+      onClick: (cell, event) =>
+        handleTerminalCellClick(this.options, cell, event),
     });
     this.search = new GhosttySearchController(options.model, () => {
       if (this.applyingFit) return;
@@ -258,8 +259,6 @@ export class WebGpuTerminalSurface
     );
     this.root.addEventListener("pointerdown", this.handlePointerDown);
     this.root.addEventListener("mousemove", this.handleLinkMouseMove);
-    this.root.addEventListener("mousedown", this.handleLinkMouseDown);
-    this.root.addEventListener("mouseup", this.handleLinkMouseUp);
     this.root.addEventListener("mouseleave", this.handleLinkMouseLeave);
     this.scrollbar.addEventListener("scroll", this.handleScroll);
   }
@@ -456,7 +455,6 @@ export class WebGpuTerminalSurface
     if (revision !== this.contentRevision) {
       this.contentRevision = revision;
       if (this.hoveredCell >= 0) this.clearHoveredLink();
-      this.mouseDownLink = null;
     }
     this.selection.reconcile();
     this.search.refreshOverlay();
@@ -606,8 +604,6 @@ export class WebGpuTerminalSurface
     this.unsubscribeInteraction();
     this.root.removeEventListener("pointerdown", this.handlePointerDown);
     this.root.removeEventListener("mousemove", this.handleLinkMouseMove);
-    this.root.removeEventListener("mousedown", this.handleLinkMouseDown);
-    this.root.removeEventListener("mouseup", this.handleLinkMouseUp);
     this.root.removeEventListener("mouseleave", this.handleLinkMouseLeave);
     this.scrollbar.removeEventListener("scroll", this.handleScroll);
   }
@@ -621,31 +617,7 @@ export class WebGpuTerminalSurface
     this.updateHoveredLink(event);
   };
 
-  private readonly handleLinkMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0) return;
-    this.updateHoveredLink(event);
-    this.mouseDownLink = this.hoveredLink;
-  };
-
-  private readonly handleLinkMouseUp = (event: MouseEvent): void => {
-    if (event.button !== 0) return;
-    this.updateHoveredLink(event);
-    const uri = this.hoveredLink;
-    const activate = uri !== null && uri === this.mouseDownLink;
-    this.mouseDownLink = null;
-    if (!activate) return;
-    const cols = Math.max(1, this.options.model.cols);
-    const cell = {
-      row: Math.floor(this.hoveredCell / cols),
-      column: this.hoveredCell % cols,
-    };
-    if (this.options.shouldOpenLink?.(event, cell) === false) return;
-    event.preventDefault();
-    this.options.onOpenLink?.(uri);
-  };
-
   private readonly handleLinkMouseLeave = (): void => {
-    this.mouseDownLink = null;
     this.clearHoveredLink();
   };
 
