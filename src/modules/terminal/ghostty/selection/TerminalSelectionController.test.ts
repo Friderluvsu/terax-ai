@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { TeraxGhostty } from "@terax/ghostty-core/adapted";
 import { AdaptedGhosttyTerminalModel } from "@/modules/terminal/ghostty/AdaptedGhosttyTerminalModel";
 import { describe, expect, it, vi } from "vitest";
+import { handleTerminalCellClick } from "@/modules/terminal/ghostty/core/terminalCellClick";
 import type {
   GhosttyTerminalModelApi,
   TerminalBufferSelection,
@@ -273,6 +274,7 @@ function dragFixture(realModel?: GhosttyTerminalModelApi) {
         end: point.column,
       }),
       lineEndColumn: () => 79,
+      hyperlinkAtViewportCell: () => null,
       scrollBy: vi.fn(() => false),
     } as unknown as GhosttyTerminalModelApi);
   const onChange = vi.fn();
@@ -311,6 +313,71 @@ function dragFixture(realModel?: GhosttyTerminalModelApi) {
       ),
   };
 }
+
+describe("terminal link pointer activation", () => {
+  function linkFixture(shouldOpenLink = () => true) {
+    const fixture = dragFixture();
+    const onOpenLink = vi.fn();
+    const onCellClick = vi.fn();
+    vi.spyOn(fixture.model, "hyperlinkAtViewportCell").mockReturnValue(
+      "https://example.com/terminal",
+    );
+    fixture.onClick.mockImplementation((cell, event) =>
+      handleTerminalCellClick(
+        { model: fixture.model, onOpenLink, onCellClick, shouldOpenLink },
+        cell,
+        event,
+      ),
+    );
+    return { ...fixture, onOpenLink, onCellClick };
+  }
+
+  it("opens a link once using pointer events even when pointerdown cancels mouse events", () => {
+    const f = linkFixture();
+    expect(f.pointer("pointerdown", 25)).toBe(false);
+    f.pointer("pointerup", 25);
+    expect(f.onOpenLink).toHaveBeenCalledExactlyOnceWith(
+      "https://example.com/terminal",
+    );
+    expect(f.onCellClick).not.toHaveBeenCalled();
+    f.controller.dispose();
+  });
+
+  it("selects URL text without opening it when dragging", () => {
+    const f = linkFixture();
+    f.pointer("pointerdown", 25);
+    f.pointer("pointermove", 65);
+    f.pointer("pointerup", 65);
+    expect(f.controller.value).not.toBeNull();
+    expect(f.onOpenLink).not.toHaveBeenCalled();
+    f.controller.dispose();
+  });
+
+  it("preserves cursor placement when the prompt-input policy declines opening", () => {
+    const f = linkFixture(() => false);
+    f.pointer("pointerdown", 25);
+    f.pointer("pointerup", 25);
+    expect(f.onOpenLink).not.toHaveBeenCalled();
+    expect(f.onCellClick).toHaveBeenCalledOnce();
+    f.controller.dispose();
+  });
+
+  it("does not activate a link after cancellation or a double click", () => {
+    for (const interrupted of ["pointercancel", "lostpointercapture"]) {
+      const f = linkFixture();
+      f.pointer("pointerdown", 25);
+      f.pointer(interrupted, 25);
+      f.pointer("pointerup", 25);
+      expect(f.onOpenLink).not.toHaveBeenCalled();
+      f.controller.dispose();
+    }
+    const f = linkFixture();
+    f.pointer("pointerdown", 25, 10, { detail: 2 });
+    f.pointer("pointerup", 25, 10, { detail: 2 });
+    expect(f.onOpenLink).not.toHaveBeenCalled();
+    f.controller.dispose();
+  });
+});
 
 describe("terminal selection click", () => {
   it("reports a plain click with its viewport cell", () => {
