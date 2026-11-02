@@ -18,7 +18,7 @@ pnpm install --frozen-lockfile
 pnpm fork:release
 ```
 
-The build creates `Terax.app` and `release/Terax-<version>-<arch>.dmg`. Open the DMG and drag the app to Applications, or use `pnpm fork:release -- --install` to build and install it directly.
+The build creates `Terax.app` and `release/Terax-<version>-<arch>.dmg`. Open the DMG and drag the app to Applications, or use `pnpm fork:release --install` to build and install it directly.
 
 The macOS build is ad-hoc signed and is not notarized. If macOS blocks the first launch, use **System Settings > Privacy & Security > Open Anyway**.
 

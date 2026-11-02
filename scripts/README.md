@@ -17,7 +17,7 @@ source scripts/fork/agent-env.sh
 | `pnpm dev` | Run only Vite; native IPC requires the Tauri app |
 | `pnpm fork:build` | Build the fork's macOS application bundle |
 | `pnpm fork:release` | Build, ad-hoc sign and package `release/Terax-<version>-<arch>.dmg` |
-| `pnpm fork:release -- --install` | Also install the release into `/Applications/Terax.app` |
+| `pnpm fork:release --install` | Also install the release into `/Applications/Terax.app` |
 | `pnpm build:cli` | Build the release CLI sidecar |
 | `pnpm build:cli:dev` | Build the development CLI sidecar |
 

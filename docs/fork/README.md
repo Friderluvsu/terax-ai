@@ -12,7 +12,7 @@ pnpm install --frozen-lockfile
 pnpm fork:dev
 ```
 
-Для сборки приложения и DMG: `pnpm fork:release`. Результат появляется в `release/`. Флаг `-- --install` также устанавливает сборку в `/Applications`. Подробности команд: [scripts/README.md](../../scripts/README.md).
+Для сборки приложения и DMG: `pnpm fork:release`. Результат появляется в `release/`. Флаг `--install` также устанавливает сборку в `/Applications`. Подробности команд: [scripts/README.md](../../scripts/README.md).
 
 ## Что важно в повседневной работе
 
