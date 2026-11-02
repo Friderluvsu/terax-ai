@@ -390,6 +390,15 @@ export function ghosttySelectionForLeaf(leafId: number): string | null {
   return sessions.get(leafId)?.surface?.getSelection() ?? null;
 }
 
+export function ghosttyScreenForLeaf(
+  leafId: number,
+  maxLines: number,
+): { text: string; cols: number } | null {
+  const model = sessions.get(leafId)?.model;
+  if (!model) return null;
+  return { text: model.readText(maxLines), cols: model.cols };
+}
+
 export function ghosttyCwdForLeaf(leafId: number): string | null {
   return sessions.get(leafId)?.lastCwd ?? null;
 }

@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { WindowControls } from "@/components/WindowControls";
 import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { NotificationBell } from "@/modules/agents";
+import { MobileAccessButton } from "@/modules/mobile";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
 import type { Tab } from "@/modules/tabs";
 import { TabBar } from "@/modules/tabs";
@@ -146,10 +147,13 @@ export function Header({
         </Button>
 
         {!IS_MAC && (
-          <NotificationBell
-            onActivate={onActivateAgent}
-            onActivateLocal={onActivateLocalAgent}
-          />
+          <>
+            <MobileAccessButton />
+            <NotificationBell
+              onActivate={onActivateAgent}
+              onActivateLocal={onActivateLocalAgent}
+            />
+          </>
         )}
       </div>
 
@@ -201,6 +205,7 @@ export function Header({
 
       {IS_MAC && (
         <>
+          <MobileAccessButton />
           <NotificationBell
             onActivate={onActivateAgent}
             onActivateLocal={onActivateLocalAgent}

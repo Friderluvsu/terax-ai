@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101114">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Terax Remote</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="dot" id="link-dot"></span>Terax</div>
+  <nav class="tabs" id="tabs" aria-label="Terminals"></nav>
+  <div class="tools">
+    <button type="button" id="font-down" aria-label="Smaller text">A-</button>
+    <button type="button" id="font-up" aria-label="Larger text">A+</button>
+    <button type="button" id="wrap" aria-pressed="false" aria-label="Wrap lines">Wrap</button>
+  </div>
+</header>
+<main id="screen-wrap">
+  <pre id="screen" aria-live="off"></pre>
+  <div id="empty" class="empty" hidden></div>
+  <button type="button" id="to-bottom" class="to-bottom" hidden aria-label="Scroll to bottom">&#8595;</button>
+</main>
+<footer class="composer">
+  <div class="keys" role="toolbar" aria-label="Keys">
+    <button type="button" data-key="esc">Esc</button>
+    <button type="button" data-key="tab">Tab</button>
+    <button type="button" data-key="shift-tab">&#8679;Tab</button>
+    <button type="button" data-key="up">&#8593;</button>
+    <button type="button" data-key="down">&#8595;</button>
+    <button type="button" data-key="left">&#8592;</button>
+    <button type="button" data-key="right">&#8594;</button>
+    <button type="button" data-key="ctrl-c">^C</button>
+    <button type="button" data-key="ctrl-d">^D</button>
+    <button type="button" data-key="backspace">&#9003;</button>
+    <button type="button" data-key="enter">Enter</button>
+  </div>
+  <form id="send-form" class="send" autocomplete="off">
+    <textarea id="input" rows="1" placeholder="Type a command or reply" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send"></textarea>
+    <button type="submit" id="send" aria-label="Send">Send</button>
+  </form>
+  <div id="toast" class="toast" role="status" hidden></div>
+</footer>
+</body>
+</html>

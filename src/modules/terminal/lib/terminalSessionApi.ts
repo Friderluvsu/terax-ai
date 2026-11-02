@@ -8,6 +8,7 @@ import {
   ghosttyLeafIdForPty,
   ghosttyCwdForLeaf,
   ghosttyPtyIdForLeaf,
+  ghosttyScreenForLeaf,
   ghosttySelectionForLeaf,
   hasGhosttySession,
   interruptGhosttySession,
@@ -54,6 +55,13 @@ export function interruptLeaf(leafId: number): void {
 
 export function pasteIntoSession(leafId: number, text: string): boolean {
   return pasteIntoGhosttySession(leafId, text);
+}
+
+export function leafScreen(
+  leafId: number,
+  maxLines: number,
+): { text: string; cols: number } | null {
+  return ghosttyScreenForLeaf(leafId, maxLines);
 }
 
 export function leafCwd(leafId: number): string | null {

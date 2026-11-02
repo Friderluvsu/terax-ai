@@ -237,6 +237,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(modules::window_presentation::WindowPresentationState::default())
         .manage(control_state)
+        .manage(modules::mobile::MobileState::default())
         .manage(shell::ShellState::default())
         .manage(secrets::SecretsState::default())
         .manage(fs::watch::FsWatchState::default())
@@ -334,6 +335,10 @@ pub fn run() {
             workspace::workspace_current_dir,
             control::control_frontend_ready,
             control::control_respond,
+            modules::mobile::mobile_start,
+            modules::mobile::mobile_stop,
+            modules::mobile::mobile_status,
+            modules::mobile::mobile_respond,
             get_launch_dir,
             get_launch_files,
             open_settings_window,
@@ -379,6 +384,9 @@ pub fn run() {
                         state.kill_all();
                     }
                     if let Some(state) = app.try_state::<control::ControlState>() {
+                        state.shutdown();
+                    }
+                    if let Some(state) = app.try_state::<modules::mobile::MobileState>() {
                         state.shutdown();
                     }
                     if let Some(state) = app.try_state::<remote::RemoteState>() {

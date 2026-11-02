@@ -545,7 +545,7 @@ fn valid_request_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
@@ -555,7 +555,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
-fn generate_token() -> Result<String, String> {
+pub(crate) fn generate_token() -> Result<String, String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|error| format!("generate control token: {error}"))?;
     let mut token = String::with_capacity(bytes.len() * 2);

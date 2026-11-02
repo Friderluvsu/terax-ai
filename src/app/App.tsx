@@ -37,6 +37,7 @@ import { AiComposerProvider } from "@/modules/ai/lib/composer";
 import { native } from "@/modules/ai/lib/native";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
 import { useControlBridge } from "@/modules/control";
+import { useMobileBridge } from "@/modules/mobile";
 import {
   type EditorPaneHandle,
   NewEditorDialog,
@@ -1591,6 +1592,7 @@ export default function App() {
     activeSpaceIdRef,
     onOpen: openControlFile,
   });
+  useMobileBridge({ tabsRef, activeTabIdRef: activeIdRef });
 
   useEffect(() => {
     setLspNavigator({ openFile: openContentHit });
