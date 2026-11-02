@@ -9,6 +9,7 @@ const SCREEN_LINES = 400;
 const $ = (id) => document.getElementById(id);
 const els = {
   tabs: $("tabs"),
+  space: $("space"),
   screen: $("screen"),
   wrap: $("screen-wrap"),
   empty: $("empty"),
@@ -63,6 +64,7 @@ const prefs = loadPrefs();
 const state = {
   terminals: [],
   leaf: null,
+  spaceId: null,
   hash: null,
   cols: 80,
   stopped: false,
@@ -128,29 +130,64 @@ function handleError(error) {
   setLink(false);
 }
 
-function renderTabs() {
-  els.tabs.replaceChildren(
-    ...state.terminals.map((terminal) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "tab";
-      button.setAttribute("role", "tab");
-      button.setAttribute("aria-selected", String(terminal.leaf === state.leaf));
-      const dot = document.createElement("span");
-      dot.className = `dot ${terminal.agentStatus || ""}`;
-      const label = document.createElement("span");
-      label.className = "label";
-      label.textContent = terminal.agent ? `${terminal.agent} · ${terminal.title}` : terminal.title;
-      button.append(dot, label);
-      button.addEventListener("click", () => selectLeaf(terminal.leaf));
-      return button;
+function preferredIn(terminals) {
+  return (
+    terminals.find((terminal) => terminal.agentStatus === "waiting") ||
+    terminals.find((terminal) => terminal.active) ||
+    terminals[0] ||
+    null
+  );
+}
+
+function renderSpaces() {
+  const spaces = new Map();
+  for (const terminal of state.terminals) {
+    const entry = spaces.get(terminal.spaceId) || { name: terminal.space, count: 0, waiting: false };
+    entry.count += 1;
+    entry.waiting ||= terminal.agentStatus === "waiting";
+    spaces.set(terminal.spaceId, entry);
+  }
+  els.space.replaceChildren(
+    ...[...spaces].map(([id, entry]) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = `${entry.waiting ? "\u25cf " : ""}${entry.name} (${entry.count})`;
+      return option;
     }),
   );
+  els.space.hidden = spaces.size === 0;
+  if (state.spaceId !== null) els.space.value = state.spaceId;
+}
+
+function renderTabs() {
+  renderSpaces();
+  els.tabs.replaceChildren(
+    ...state.terminals
+      .filter((terminal) => terminal.spaceId === state.spaceId)
+      .map((terminal) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = terminal.cold ? "tab cold" : "tab";
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-selected", String(terminal.leaf === state.leaf));
+        const dot = document.createElement("span");
+        dot.className = `dot ${terminal.agentStatus || ""}`;
+        const label = document.createElement("span");
+        label.className = "label";
+        label.textContent = terminal.agent ? `${terminal.agent} · ${terminal.title}` : terminal.title;
+        button.append(dot, label);
+        button.addEventListener("click", () => selectLeaf(terminal.leaf));
+        return button;
+      }),
+  );
+  els.tabs.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function selectLeaf(leaf) {
   if (state.leaf === leaf) return;
+  const terminal = state.terminals.find((item) => item.leaf === leaf);
   state.leaf = leaf;
+  state.spaceId = terminal ? terminal.spaceId : state.spaceId;
   state.hash = null;
   state.stickToBottom = true;
   els.screen.textContent = "";
@@ -158,17 +195,25 @@ function selectLeaf(leaf) {
   void refreshScreen();
 }
 
+els.space.addEventListener("change", () => {
+  state.spaceId = els.space.value;
+  const target = preferredIn(state.terminals.filter((terminal) => terminal.spaceId === state.spaceId));
+  if (target) selectLeaf(target.leaf);
+  else renderTabs();
+});
+
 async function refreshList() {
   try {
     const result = await api("list");
     setLink(true);
     state.terminals = result.terminals || [];
-    if (!state.terminals.some((terminal) => terminal.leaf === state.leaf)) {
-      const preferred =
-        state.terminals.find((terminal) => terminal.agentStatus === "waiting") ||
-        state.terminals.find((terminal) => terminal.active) ||
-        state.terminals[0];
+    const current = state.terminals.find((terminal) => terminal.leaf === state.leaf);
+    if (current) {
+      state.spaceId = current.spaceId;
+    } else {
+      const preferred = preferredIn(state.terminals);
       state.leaf = preferred ? preferred.leaf : null;
+      state.spaceId = preferred ? preferred.spaceId : null;
       state.hash = null;
     }
     renderTabs();
@@ -199,6 +244,11 @@ async function refreshScreen() {
     const result = await api("screen", { leaf, lines: SCREEN_LINES, since: state.hash });
     setLink(true);
     if (leaf !== state.leaf || result.unchanged) return;
+    if (result.starting) {
+      state.hash = null;
+      showEmpty("Starting terminal");
+      return;
+    }
     state.hash = result.hash;
     if (result.cols && result.cols !== state.cols) {
       state.cols = result.cols;

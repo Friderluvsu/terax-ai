@@ -1,15 +1,19 @@
 import type { Tab } from "@/modules/tabs/lib/useTabs";
 import { leafIds } from "@/modules/terminal/lib/panes";
-import { selectLiveTerminals } from "@/modules/terminal/lib/liveTerminals";
 
 export const MAX_SCREEN_LINES = 1000;
 export const MAX_SEND_CHARS = 16_000;
 
 export type MobileAgent = { agent: string; status: "working" | "waiting" };
 
+export type MobileSpace = { id: string; name: string };
+
 export type MobileTerminal = {
   leaf: number;
   tab: number;
+  spaceId: string;
+  space: string;
+  cold: boolean;
   title: string;
   active: boolean;
   agent: string | null;
@@ -38,16 +42,29 @@ export function describeTerminals(
   activeTabId: number,
   agents: Record<number, MobileAgent>,
   labelAgent: (agent: string) => string,
+  spaces: readonly MobileSpace[],
 ): MobileTerminal[] {
-  return selectLiveTerminals(tabs)
-    .filter((tab) => !tab.private)
-    .flatMap((tab) => {
+  const order = new Map(spaces.map((space, index) => [space.id, index]));
+  const names = new Map(spaces.map((space) => [space.id, space.name]));
+  return tabs
+    .filter((tab) => tab.kind === "terminal" && !tab.private)
+    .map((tab, index) => ({ tab, index }))
+    .sort(
+      (a, b) =>
+        (order.get(a.tab.spaceId) ?? spaces.length) -
+          (order.get(b.tab.spaceId) ?? spaces.length) || a.index - b.index,
+    )
+    .flatMap(({ tab }) => {
+      if (tab.kind !== "terminal") return [];
       const leaves = leafIds(tab.paneTree);
       return leaves.map((leaf, index) => {
         const agent = agents[leaf];
         return {
           leaf,
           tab: tab.id,
+          spaceId: tab.spaceId,
+          space: names.get(tab.spaceId) ?? "Default",
+          cold: tab.cold === true,
           title: leaves.length > 1 ? `${tab.title} ${index + 1}` : tab.title,
           active: tab.id === activeTabId && tab.activeLeafId === leaf,
           agent: agent ? labelAgent(agent.agent) : null,
@@ -64,15 +81,16 @@ function record(params: unknown): Record<string, unknown> {
   return params as Record<string, unknown>;
 }
 
-export function requireLeaf(
+export function requireTerminal(
   params: unknown,
   allowed: readonly MobileTerminal[],
-): number {
+): MobileTerminal {
   const leaf = record(params).leaf;
-  if (!Number.isSafeInteger(leaf) || !allowed.some((t) => t.leaf === leaf)) {
-    throw new MobileRequestError("terminal is not available");
-  }
-  return leaf as number;
+  const terminal = Number.isSafeInteger(leaf)
+    ? allowed.find((t) => t.leaf === leaf)
+    : undefined;
+  if (!terminal) throw new MobileRequestError("terminal is not available");
+  return terminal;
 }
 
 export function parseScreen(params: unknown): {

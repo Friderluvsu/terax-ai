@@ -172,6 +172,7 @@ export default function App() {
     reorderTab,
     reorderTabByGap,
     newTabInSpace,
+    warmTab,
     removeTabsForSpace,
     markBooted,
     setActiveSpaceForNewTabs,
@@ -1592,7 +1593,7 @@ export default function App() {
     activeSpaceIdRef,
     onOpen: openControlFile,
   });
-  useMobileBridge({ tabsRef, activeTabIdRef: activeIdRef });
+  useMobileBridge({ tabsRef, activeTabIdRef: activeIdRef, warmTab });
 
   useEffect(() => {
     setLspNavigator({ openFile: openContentHit });

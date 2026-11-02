@@ -628,6 +628,14 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     });
   }, [activeId, booted]);
 
+  const warmTab = useCallback((id: number) => {
+    setTabs((curr) =>
+      curr.some((x) => x.id === id && x.cold)
+        ? curr.map((x) => (x.id === id ? { ...x, cold: false } : x))
+        : curr,
+    );
+  }, []);
+
   const allocId = useCallback(() => nextIdRef.current++, []);
 
   const markBooted = useCallback(() => setBooted(true), []);
@@ -1466,6 +1474,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     reorderTab,
     reorderTabByGap,
     newTabInSpace,
+    warmTab,
     removeTabsForSpace,
     markBooted,
     setActiveSpaceForNewTabs,

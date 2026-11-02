@@ -1,4 +1,5 @@
 import { displayAgent, useAgentStore } from "@/modules/agents";
+import { useSpaces } from "@/modules/spaces";
 import type { Tab } from "@/modules/tabs/lib/useTabs";
 import {
   getLeafBlockMode,
@@ -16,7 +17,7 @@ import {
   MobileRequestError,
   parseScreen,
   parseSend,
-  requireLeaf,
+  requireTerminal,
   screenHash,
 } from "./lib/protocol";
 
@@ -25,6 +26,7 @@ type MobileRequest = { id: number; method: string; params: unknown };
 type Options = {
   tabsRef: RefObject<Tab[]>;
   activeTabIdRef: RefObject<number>;
+  warmTab: (tabId: number) => void;
 };
 
 function sendText(leaf: number, text: string, enter: boolean): boolean {
@@ -45,21 +47,23 @@ function handle(request: MobileRequest, options: Options): unknown {
     options.activeTabIdRef.current ?? 0,
     useAgentStore.getState().sessions,
     displayAgent,
+    useSpaces.getState().spaces,
   );
   switch (request.method) {
     case "list":
       return { terminals };
     case "screen": {
-      const leaf = requireLeaf(request.params, terminals);
+      const terminal = requireTerminal(request.params, terminals);
       const { lines, since } = parseScreen(request.params);
-      const screen = leafScreen(leaf, lines);
-      if (!screen) throw new MobileRequestError("terminal is starting");
+      if (terminal.cold) options.warmTab(terminal.tab);
+      const screen = terminal.cold ? null : leafScreen(terminal.leaf, lines);
+      if (!screen) return { starting: true };
       const hash = screenHash(screen.text, screen.cols);
       if (hash === since) return { unchanged: true, hash };
       return { text: screen.text, cols: screen.cols, hash };
     }
     case "send": {
-      const leaf = requireLeaf(request.params, terminals);
+      const { leaf } = requireTerminal(request.params, terminals);
       const { text, enter } = parseSend(request.params);
       if (!sendText(leaf, text, enter)) {
         throw new MobileRequestError("terminal is not accepting input");
@@ -67,7 +71,7 @@ function handle(request: MobileRequest, options: Options): unknown {
       return { ok: true };
     }
     case "key": {
-      const leaf = requireLeaf(request.params, terminals);
+      const { leaf } = requireTerminal(request.params, terminals);
       if (!writeToSession(leaf, keySequence(request.params))) {
         throw new MobileRequestError("terminal is not accepting input");
       }
@@ -78,7 +82,11 @@ function handle(request: MobileRequest, options: Options): unknown {
   }
 }
 
-export function useMobileBridge({ tabsRef, activeTabIdRef }: Options): void {
+export function useMobileBridge({
+  tabsRef,
+  activeTabIdRef,
+  warmTab,
+}: Options): void {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -87,7 +95,7 @@ export function useMobileBridge({ tabsRef, activeTabIdRef }: Options): void {
       try {
         reply = {
           ok: true,
-          result: handle(payload, { tabsRef, activeTabIdRef }),
+          result: handle(payload, { tabsRef, activeTabIdRef, warmTab }),
         };
       } catch (error) {
         reply = {
@@ -110,5 +118,5 @@ export function useMobileBridge({ tabsRef, activeTabIdRef }: Options): void {
       disposed = true;
       unlisten?.();
     };
-  }, [tabsRef, activeTabIdRef]);
+  }, [tabsRef, activeTabIdRef, warmTab]);
 }

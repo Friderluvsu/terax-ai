@@ -12,13 +12,16 @@
 </head>
 <body>
 <header class="bar">
-  <div class="brand"><span class="dot" id="link-dot"></span>Terax</div>
-  <nav class="tabs" id="tabs" aria-label="Terminals"></nav>
-  <div class="tools">
-    <button type="button" id="font-down" aria-label="Smaller text">A-</button>
-    <button type="button" id="font-up" aria-label="Larger text">A+</button>
-    <button type="button" id="wrap" aria-pressed="false" aria-label="Wrap lines">Wrap</button>
+  <div class="row">
+    <div class="brand"><span class="dot" id="link-dot"></span>Terax</div>
+    <select id="space" aria-label="Space"></select>
+    <div class="tools">
+      <button type="button" id="font-down" aria-label="Smaller text">A-</button>
+      <button type="button" id="font-up" aria-label="Larger text">A+</button>
+      <button type="button" id="wrap" aria-pressed="false" aria-label="Wrap lines">Wrap</button>
+    </div>
   </div>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Terminals"></nav>
 </header>
 <main id="screen-wrap">
   <pre id="screen" aria-live="off"></pre>

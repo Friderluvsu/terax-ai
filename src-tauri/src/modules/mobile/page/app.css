@@ -48,11 +48,30 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
 
 .bar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: calc(env(safe-area-inset-top) + 6px) 12px 6px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-height: 30px;
 }
 
 .brand {
@@ -79,10 +98,10 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  flex: 1;
   min-width: 0;
   scrollbar-width: none;
 }
+.tabs:empty { display: none; }
 .tabs::-webkit-scrollbar { display: none; }
 
 .tab {
@@ -97,6 +116,7 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
 }
 .tab span.label { overflow: hidden; text-overflow: ellipsis; }
 .tab[aria-selected="true"] { color: var(--fg); border-color: var(--accent); }
+.tab.cold { border-style: dashed; }
 
 .tools { display: flex; gap: 4px; flex: none; }
 .tools button { padding: 4px 8px; min-height: 30px; font-size: 12px; }
