@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use terax_control_protocol::{validate_brief, validate_title};
 
+use super::catalog::{self, AgentCatalog};
+
 pub const PLANNER_AGENTS: &[&str] = &["claude", "codex", "gemini"];
 pub const MAX_JOB_BYTES: usize = 8 * 1024;
 const MAX_PLANNED_TASKS: usize = 8;
@@ -16,17 +18,27 @@ const POLL: Duration = Duration::from_millis(200);
 pub struct PlannedTask {
     pub title: String,
     pub brief: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
-pub fn prompt(job: &str) -> String {
+pub fn prompt(job: &str, catalog: &[AgentCatalog]) -> String {
     format!(
         "You plan work for parallel coding agents. Each task runs in its own git worktree, \
 so tasks must be independent and should touch different files. Read the repository \
 only as much as you need; do not modify anything. Split the job into 1 to 6 tasks \
 (one task when the job is small). For each task give a short title and a brief that \
 states the goal, the files or area to change and what not to touch, and how to \
-verify it. Reply with only a JSON array, no prose: \
-[{{\"title\": \"...\", \"brief\": \"...\"}}]\n\nJob:\n{job}"
+verify it. Also pick the agent and model that should run each task from the list \
+below: use a cheap, fast model for mechanical edits, a balanced one for ordinary \
+feature work, and the strongest for hard design or tricky bugs. Use an agent and \
+model exactly as written, or omit \"model\" to use the agent's default.\n\n\
+Available:\n{available}\n\
+Reply with only a JSON array, no prose: \
+[{{\"title\": \"...\", \"brief\": \"...\", \"agent\": \"...\", \"model\": \"...\"}}]\n\nJob:\n{job}",
+        available = catalog::describe(catalog),
     )
 }
 
@@ -61,13 +73,13 @@ pub fn command(agent: &str, prompt: &str, last_message: &Path) -> Option<(String
 
 /// Pulls the task list out of a planner reply: the last JSON array in the
 /// text, tolerating code fences and surrounding prose.
-pub fn parse(reply: &str) -> Result<Vec<PlannedTask>, String> {
+pub fn parse(reply: &str, catalog: &[AgentCatalog]) -> Result<Vec<PlannedTask>, String> {
     let mut end = reply.len();
     while let Some(close) = reply[..end].rfind(']') {
         let mut start = close;
         while let Some(open) = reply[..start].rfind('[') {
             if let Ok(tasks) = serde_json::from_str::<Vec<PlannedTask>>(&reply[open..=close]) {
-                return finish(tasks);
+                return finish(tasks, catalog);
             }
             start = open;
         }
@@ -76,12 +88,18 @@ pub fn parse(reply: &str) -> Result<Vec<PlannedTask>, String> {
     Err("the planner did not return a task list".to_string())
 }
 
-fn finish(tasks: Vec<PlannedTask>) -> Result<Vec<PlannedTask>, String> {
+fn finish(tasks: Vec<PlannedTask>, catalog: &[AgentCatalog]) -> Result<Vec<PlannedTask>, String> {
     let tasks: Vec<PlannedTask> = tasks
         .into_iter()
-        .map(|task| PlannedTask {
-            title: task.title.trim().chars().take(120).collect(),
-            brief: task.brief.trim().to_string(),
+        .map(|task| {
+            let (agent, model) =
+                catalog::check(catalog, task.agent.as_deref(), task.model.as_deref());
+            PlannedTask {
+                title: task.title.trim().chars().take(120).collect(),
+                brief: task.brief.trim().to_string(),
+                agent,
+                model,
+            }
         })
         .filter(|task| validate_title(&task.title).is_ok() && validate_brief(&task.brief).is_ok())
         .take(MAX_PLANNED_TASKS)
@@ -99,7 +117,8 @@ pub fn run(agent: &str, job: &str, repo: &Path) -> Result<Vec<PlannedTask>, Stri
     }
     let scratch = tempfile::tempdir().map_err(|e| format!("planner temp dir: {e}"))?;
     let last_message = scratch.path().join("last-message.txt");
-    let (bin, args) = command(agent, &prompt(job), &last_message)
+    let catalog = catalog::load();
+    let (bin, args) = command(agent, &prompt(job, &catalog), &last_message)
         .ok_or_else(|| format!("planner must be one of: {}", PLANNER_AGENTS.join(", ")))?;
     let stdout_path = scratch.path().join("stdout.txt");
     let stdout = std::fs::File::create(&stdout_path).map_err(|e| e.to_string())?;
@@ -144,21 +163,25 @@ pub fn run(agent: &str, job: &str, repo: &Path) -> Result<Vec<PlannedTask>, Stri
     if !status.success() && reply.trim().is_empty() {
         return Err(format!("{bin} exited with {status}"));
     }
-    parse(&reply)
+    parse(&reply, &catalog)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn catalog() -> Vec<AgentCatalog> {
+        catalog::build(|agent| agent == "claude", None)
+    }
+
     #[test]
     fn parses_the_last_task_array_through_prose_and_fences() {
         let reply = "I looked at [the repo].\n```json\n[{\"title\": \"Add sub\", \"brief\": \"Add subtract to calc.py\"}, {\"title\": \"Add mul\", \"brief\": \"Add multiply\"}]\n```\nDone.";
-        let tasks = parse(reply).unwrap();
+        let tasks = parse(reply, &catalog()).unwrap();
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].title, "Add sub");
-        assert!(parse("no list here").is_err());
-        assert!(parse("[1, 2]").is_err());
+        assert!(parse("no list here", &catalog()).is_err());
+        assert!(parse("[1, 2]", &catalog()).is_err());
     }
 
     #[test]
@@ -167,11 +190,13 @@ mod tests {
             .map(|i| serde_json::json!({ "title": format!("t{i}"), "brief": "b" }))
             .collect();
         assert_eq!(
-            parse(&serde_json::to_string(&many).unwrap()).unwrap().len(),
+            parse(&serde_json::to_string(&many).unwrap(), &catalog())
+                .unwrap()
+                .len(),
             8
         );
         let bad = r#"[{"title": "a\nb", "brief": "x"}, {"title": "ok", "brief": " "}]"#;
-        assert!(parse(bad).is_err());
+        assert!(parse(bad, &catalog()).is_err());
     }
 
     #[test]
@@ -184,6 +209,32 @@ mod tests {
         let (_, args) = command("codex", "p", out).unwrap();
         assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
         assert!(command("bash", "p", out).is_none());
-        assert!(prompt("do x").ends_with("Job:\ndo x"));
+        let text = prompt("do x", &catalog());
+        assert!(text.ends_with("Job:\ndo x"));
+        assert!(text.contains("\"haiku\""));
+    }
+
+    #[test]
+    fn planner_picks_survive_only_when_they_exist() {
+        let reply = r#"[
+            {"title": "a", "brief": "x", "agent": "claude", "model": "haiku"},
+            {"title": "b", "brief": "x", "agent": "claude", "model": "gpt-9"},
+            {"title": "c", "brief": "x", "agent": "gemini", "model": "gemini-2.5-pro"},
+            {"title": "d", "brief": "x"}
+        ]"#;
+        let tasks = parse(reply, &catalog()).unwrap();
+        let picks: Vec<_> = tasks
+            .iter()
+            .map(|t| (t.agent.as_deref(), t.model.as_deref()))
+            .collect();
+        assert_eq!(
+            picks,
+            [
+                (Some("claude"), Some("haiku")),
+                (Some("claude"), None),
+                (None, None),
+                (None, None)
+            ]
+        );
     }
 }

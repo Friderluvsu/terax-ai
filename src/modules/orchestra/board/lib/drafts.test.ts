@@ -9,6 +9,24 @@ describe("drafts", () => {
     expect(() => parsePlan({})).toThrow();
   });
 
+  it("keeps the planner's agent and model only when they are valid", () => {
+    const [first, second, third] = parsePlan([
+      { title: "A", brief: "a", agent: "codex", model: "gpt-x" },
+      { title: "B", brief: "b", agent: "nope", model: "gpt-x" },
+      { title: "C", brief: "c", agent: "claude", model: "--bad" },
+    ]);
+    expect(first).toMatchObject({ agent: "codex", model: "gpt-x" });
+    expect(second.agent).toBeUndefined();
+    expect(second.model).toBeUndefined();
+    expect(third).toMatchObject({ agent: "claude" });
+    expect(third.model).toBeUndefined();
+    expect(newDraft("gemini", first)).toMatchObject({
+      agent: "codex",
+      model: "gpt-x",
+    });
+    expect(newDraft("gemini", second).agent).toBe("gemini");
+  });
+
   it("flags cards the backend would refuse", () => {
     const draft = newDraft("codex", { title: "Docs", brief: "write docs" });
     expect(draftProblem(draft)).toBeNull();

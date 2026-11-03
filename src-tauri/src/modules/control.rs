@@ -22,7 +22,7 @@ use terax_control_protocol::{
 };
 
 use crate::modules::orchestra::{
-    checks, plan, worktree, Caller, Created, Orchestra, OrchestraError, Stopped,
+    catalog, checks, plan, worktree, Caller, Created, Orchestra, OrchestraError, Stopped,
 };
 use crate::modules::{fs, workspace};
 
@@ -629,6 +629,12 @@ pub async fn orchestra_plan(
         plan::run(&agent, &job, &repo).map_err(|error| ("plan_failed", error))
     })
     .await
+}
+
+/// Installed agents and the models each can run, for the board's pickers.
+#[tauri::command]
+pub async fn orchestra_catalog() -> Result<Vec<catalog::AgentCatalog>, String> {
+    blocking(|| Ok(catalog::load())).await
 }
 
 #[tauri::command]

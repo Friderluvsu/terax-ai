@@ -14,7 +14,12 @@ export type Draft = {
   model: string;
 };
 
-export type PlannedTask = { title: string; brief: string };
+export type PlannedTask = {
+  title: string;
+  brief: string;
+  agent?: AgentLauncherId;
+  model?: string;
+};
 
 const MODEL = /^[A-Za-z0-9._:/[\]][A-Za-z0-9._:/[\]-]{0,63}$/;
 const MAX_TITLE = 120;
@@ -26,16 +31,32 @@ export function newDraft(
   agent: AgentLauncherId,
   task: PlannedTask = { title: "", brief: "" },
 ): Draft {
-  return { id: nextDraftId++, ...task, agent, model: "" };
+  return {
+    id: nextDraftId++,
+    title: task.title,
+    brief: task.brief,
+    agent: task.agent ?? agent,
+    model: task.model ?? "",
+  };
 }
 
 export function parsePlan(value: unknown): PlannedTask[] {
   if (!Array.isArray(value)) throw new Error("planner returned no task list");
   return value.flatMap((entry) => {
     if (typeof entry !== "object" || entry === null) return [];
-    const { title, brief } = entry as Record<string, unknown>;
+    const { title, brief, agent, model } = entry as Record<string, unknown>;
     if (typeof title !== "string" || typeof brief !== "string") return [];
-    return [{ title, brief }];
+    const launcher = AGENT_LAUNCHERS.find((entry) => entry.id === agent)?.id;
+    return [
+      {
+        title,
+        brief,
+        ...(launcher && { agent: launcher }),
+        ...(launcher &&
+          typeof model === "string" &&
+          MODEL.test(model) && { model }),
+      },
+    ];
   });
 }
 

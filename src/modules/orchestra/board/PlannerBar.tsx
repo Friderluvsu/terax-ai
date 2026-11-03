@@ -25,6 +25,14 @@ import {
   type Planner,
   parsePlan,
 } from "./lib/drafts";
+import {
+  type AgentCatalog,
+  CUSTOM_MODEL,
+  isInstalled,
+  modelChoice,
+  modelsFor,
+  useAgentCatalog,
+} from "./lib/catalog";
 import { useBoard, useBoardStore } from "./store";
 
 const SELECT =
@@ -42,6 +50,7 @@ export function PlannerBar({ run, cwd }: Props) {
   const board = useBoard(run);
   const update = useBoardStore((state) => state.update);
   const [starting, setStarting] = useState(false);
+  const catalog = useAgentCatalog();
 
   const setDraft = (id: number, patch: Partial<Draft>) =>
     update(run, (b) => ({
@@ -177,6 +186,7 @@ export function PlannerBar({ run, cwd }: Props) {
                 draft={draft}
                 problem={problems.get(draft.id) ?? null}
                 onChange={(patch) => setDraft(draft.id, patch)}
+                catalog={catalog}
                 onRemove={() =>
                   update(run, (b) => ({
                     drafts: b.drafts.filter((d) => d.id !== draft.id),
@@ -219,12 +229,17 @@ function DraftCard({
   problem,
   onChange,
   onRemove,
+  catalog,
 }: {
   draft: Draft;
   problem: string | null;
   onChange: (patch: Partial<Draft>) => void;
   onRemove: () => void;
+  catalog: AgentCatalog[];
 }) {
+  const models = modelsFor(catalog, draft.agent);
+  const [custom, setCustom] = useState(false);
+  const choice = custom ? CUSTOM_MODEL : modelChoice(models, draft.model);
   return (
     <div className="flex w-72 shrink-0 flex-col gap-1.5 rounded-lg border border-border/60 bg-card p-2">
       <div className="flex items-center gap-1">
@@ -258,25 +273,50 @@ function DraftCard({
         <select
           aria-label="Agent"
           value={draft.agent}
-          onChange={(event) =>
-            onChange({ agent: event.target.value as AgentLauncherId })
-          }
-          className={SELECT}
+          onChange={(event) => {
+            setCustom(false);
+            onChange({
+              agent: event.target.value as AgentLauncherId,
+              model: "",
+            });
+          }}
+          className={cn(SELECT, "shrink-0")}
         >
           {AGENT_LAUNCHERS.map((launcher) => (
             <option key={launcher.id} value={launcher.id}>
               {launcher.label}
+              {isInstalled(catalog, launcher.id) ? "" : " (not found)"}
             </option>
           ))}
         </select>
+        <select
+          aria-label="Model"
+          value={choice}
+          onChange={(event) => {
+            const picked = event.target.value;
+            setCustom(picked === CUSTOM_MODEL);
+            onChange({ model: picked === CUSTOM_MODEL ? "" : picked });
+          }}
+          className={cn(SELECT, "min-w-0 flex-1")}
+        >
+          <option value="">Default model</option>
+          {models.map((model) => (
+            <option key={model.id} value={model.id} title={model.note}>
+              {model.label}
+            </option>
+          ))}
+          <option value={CUSTOM_MODEL}>Custom...</option>
+        </select>
+      </div>
+      {choice === CUSTOM_MODEL ? (
         <input
           value={draft.model}
           onChange={(event) => onChange({ model: event.target.value })}
           maxLength={64}
-          placeholder="Model (default)"
+          placeholder="Model name, exactly as the agent expects"
           className={cn(FIELD, "h-7 py-0")}
         />
-      </div>
+      ) : null}
       {problem && (draft.brief || draft.title) ? (
         <p className="text-[11px] text-destructive">{problem}</p>
       ) : null}

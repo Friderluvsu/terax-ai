@@ -2,6 +2,7 @@
 //! their own git worktrees. Roles are bound to pane credentials in Rust, so a
 //! worker can never start other workers.
 
+pub mod catalog;
 pub mod checks;
 pub mod plan;
 pub mod run;
