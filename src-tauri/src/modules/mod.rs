@@ -8,6 +8,7 @@ pub mod git;
 pub mod history;
 pub mod lsp;
 pub mod mobile;
+pub mod orchestra;
 pub mod net;
 pub mod preview;
 pub mod proc;

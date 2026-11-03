@@ -11,11 +11,15 @@ use std::time::{Duration, SystemTime};
 use serde_json::{json, Value};
 use tauri::{Emitter, Manager};
 use terax_control_protocol::{
-    ControlDescriptor, ControlRequest, ControlResponse, FrontendRequest, FrontendResponse,
-    OpenParams, MAX_MESSAGE_BYTES, METHODS, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN,
-    METHOD_PING, PROTOCOL_VERSION, SERVER_RESPONSE_ID,
+    CallerContext, ControlDescriptor, ControlRequest, ControlResponse, FrontendRequest,
+    FrontendResponse, OpenParams, OrchestrateParams, RunStopParams, TaskCloseParams,
+    TaskCreateParams, TaskStopParams, FRONTEND_TASK_CLOSE, FRONTEND_TASK_OPEN, MAX_MESSAGE_BYTES,
+    METHODS, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING,
+    METHOD_RUN_STOP, METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_STOP, PROTOCOL_VERSION,
+    SERVER_RESPONSE_ID,
 };
 
+use crate::modules::orchestra::{Caller, Orchestra, OrchestraError, Stopped};
 use crate::modules::{fs, workspace};
 
 const CONTROL_EVENT: &str = "terax:control-request";
@@ -26,6 +30,9 @@ const MAX_CONNECTIONS: usize = 32;
 const LISTENER_STACK_BYTES: usize = 256 * 1024;
 const REQUEST_STACK_BYTES: usize = 512 * 1024;
 const STALE_LAUNCHER_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+// Pane ids grow monotonically, so evicting the smallest drops the oldest shell.
+// An evicted pane fails closed: its token stops authenticating.
+const MAX_PANE_CREDENTIALS: usize = 4096;
 
 #[derive(Clone)]
 struct RuntimeInfo {
@@ -42,6 +49,8 @@ struct ControlCore {
     shutting_down: AtomicBool,
     active_connections: AtomicUsize,
     pending: Mutex<HashMap<String, SyncSender<FrontendResponse>>>,
+    panes: Mutex<HashMap<u32, String>>,
+    orchestra: Orchestra,
 }
 
 #[derive(Clone)]
@@ -55,6 +64,8 @@ impl Default for ControlState {
             shutting_down: AtomicBool::new(false),
             active_connections: AtomicUsize::new(0),
             pending: Mutex::new(HashMap::new()),
+            panes: Mutex::new(HashMap::new()),
+            orchestra: Orchestra::default(),
         }))
     }
 }
@@ -66,10 +77,13 @@ pub struct ShellControlEnv {
     pub pane_id: u32,
     pub cli_path: Option<String>,
     pub cli_bin_dir: Option<PathBuf>,
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl ControlState {
-    pub fn shell_env(&self, pane_id: u32) -> Option<ShellControlEnv> {
+    /// Each shell gets its own token, so a request proves which pane sent it
+    /// and the pane id in the request body is never trusted.
+    pub fn shell_env(&self, pane_id: u32, cwd: Option<&Path>) -> Option<ShellControlEnv> {
         if self.0.shutting_down.load(Ordering::Acquire) {
             return None;
         }
@@ -77,13 +91,52 @@ impl ControlState {
         if self.0.shutting_down.load(Ordering::Acquire) {
             return None;
         }
+        let token = match generate_token() {
+            Ok(token) => token,
+            Err(error) => {
+                log::warn!("could not issue pane control token: {error}");
+                return None;
+            }
+        };
+        let evicted = {
+            let mut panes = self.0.panes.lock().expect("control panes poisoned");
+            panes.insert(pane_id, token.clone());
+            let mut evicted = Vec::new();
+            while panes.len() > MAX_PANE_CREDENTIALS {
+                let Some(oldest) = panes.keys().min().copied() else {
+                    break;
+                };
+                panes.remove(&oldest);
+                evicted.push(oldest);
+            }
+            evicted
+        };
+        for pane in evicted {
+            self.0.orchestra.forget_pane(pane);
+        }
+        let extra_env = self.0.orchestra.register_pane(pane_id, cwd);
         Some(ShellControlEnv {
             address: runtime.address.clone(),
-            token: runtime.token.clone(),
+            token,
             pane_id,
             cli_path: runtime.cli_path.as_ref().map(fs::to_canon),
             cli_bin_dir: runtime.launcher_dir.clone(),
+            extra_env,
         })
+    }
+
+    fn authenticate(&self, runtime: &RuntimeInfo, token: &str) -> Option<Caller> {
+        if constant_time_eq(token.as_bytes(), runtime.token.as_bytes()) {
+            return Some(Caller::External);
+        }
+        let panes = self.0.panes.lock().expect("control panes poisoned");
+        let mut found = None;
+        for (pane, pane_token) in panes.iter() {
+            if constant_time_eq(token.as_bytes(), pane_token.as_bytes()) {
+                found = Some(Caller::Pane(*pane));
+            }
+        }
+        found
     }
 
     pub fn shutdown(&self) {
@@ -115,6 +168,14 @@ pub fn start(app: tauri::AppHandle, state: ControlState) -> Result<(), String> {
     let token = generate_token()?;
     let descriptor_path = descriptor_path(&app.config().identifier)?;
     sweep_stale_launcher_dirs(&descriptor_path);
+    match app.path().app_data_dir() {
+        Ok(dir) => {
+            if let Err(error) = state.0.orchestra.init(dir.join("orchestra")) {
+                log::warn!("orchestration disabled: {error}");
+            }
+        }
+        Err(error) => log::warn!("orchestration disabled: {error}"),
+    }
     let cli_path = find_bundled_cli();
     let launcher_dir = cli_path.as_deref().and_then(|cli_path| {
         match prepare_cli_launcher(&descriptor_path, cli_path) {
@@ -317,9 +378,15 @@ fn route_request(
             "control server is not initialized",
         );
     };
-    if !constant_time_eq(request.token.as_bytes(), runtime.token.as_bytes()) {
+    let Some(caller) = state.authenticate(runtime, &request.token) else {
         return ControlResponse::failure(request.id, "unauthorized", "invalid control token");
-    }
+    };
+    request.caller = CallerContext {
+        pane_id: match caller {
+            Caller::Pane(pane) => Some(pane),
+            Caller::External => None,
+        },
+    };
 
     match request.method.as_str() {
         METHOD_PING => ControlResponse::success(
@@ -365,7 +432,166 @@ fn route_request(
                 Err((code, message)) => ControlResponse::failure(request.id, code, message),
             }
         }
+        METHOD_ORCHESTRATE | METHOD_TASK_CREATE | METHOD_TASK_LIST | METHOD_TASK_STOP
+        | METHOD_RUN_STOP => {
+            let id = request.id.clone();
+            match route_orchestra(request, caller, app, state) {
+                Ok(result) => ControlResponse::success(id, result),
+                Err((code, message)) => ControlResponse::failure(id, code, message),
+            }
+        }
         _ => ControlResponse::failure(request.id, "unknown_method", "unknown control method"),
+    }
+}
+
+fn parse_params<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, OrchestraError> {
+    serde_json::from_value(params)
+        .map_err(|error| ("invalid_params", format!("invalid parameters: {error}")))
+}
+
+fn route_orchestra(
+    request: ControlRequest,
+    caller: Caller,
+    app: &tauri::AppHandle,
+    state: &ControlState,
+) -> Result<Value, OrchestraError> {
+    let orchestra = &state.0.orchestra;
+    match request.method.as_str() {
+        METHOD_ORCHESTRATE => {
+            let params: OrchestrateParams = parse_params(request.params)?;
+            let cwd = validate_orchestrate_cwd(&params.cwd, app)?;
+            let run = orchestra.orchestrate(caller, &cwd)?;
+            Ok(json!({ "run": run.id, "repo": run.repo, "base": run.base }))
+        }
+        METHOD_TASK_CREATE => {
+            let params: TaskCreateParams = parse_params(request.params)?;
+            let created = orchestra.create_task(caller, params)?;
+            let id = created.task.id.clone();
+            if created.start {
+                start_task(&id, app, state);
+                drain_queue(app, state);
+            }
+            let tasks = orchestra.list(caller)?;
+            let task = tasks.into_iter().find(|task| task.id == id);
+            Ok(json!({ "task": task }))
+        }
+        METHOD_TASK_LIST => Ok(json!({ "tasks": orchestra.list(caller)? })),
+        METHOD_TASK_STOP => {
+            let params: TaskStopParams = parse_params(request.params)?;
+            let stopped = orchestra.stop_task(caller, &params.task)?;
+            Ok(finish_stop(stopped, app, state))
+        }
+        METHOD_RUN_STOP => {
+            let params: RunStopParams = parse_params(request.params)?;
+            let stopped = orchestra.stop_run(caller, params.run.as_deref())?;
+            Ok(finish_stop(stopped, app, state))
+        }
+        _ => Err(("unknown_method", "unknown control method".to_string())),
+    }
+}
+
+fn validate_orchestrate_cwd(cwd: &str, app: &tauri::AppHandle) -> Result<PathBuf, OrchestraError> {
+    let canonical = std::fs::canonicalize(cwd)
+        .map_err(|error| ("path_not_found", format!("cannot resolve cwd: {error}")))?;
+    let registry = app
+        .try_state::<workspace::WorkspaceRegistry>()
+        .ok_or_else(|| {
+            (
+                "internal_error",
+                "workspace registry is unavailable".to_string(),
+            )
+        })?;
+    if !registry.is_authorized(&canonical) {
+        return Err((
+            "path_not_accessible",
+            format!(
+                "cwd is outside the authorized workspace: {}",
+                canonical.display()
+            ),
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Creates the worktree and asks the UI for a worker tab. Failures mark the
+/// task failed and free its slot for the queue.
+fn start_task(task_id: &str, app: &tauri::AppHandle, state: &ControlState) {
+    let orchestra = &state.0.orchestra;
+    let open = match orchestra.prepare_worktree(task_id) {
+        Ok(open) => open,
+        Err((_, error)) => {
+            log::warn!("task {task_id} could not start: {error}");
+            return;
+        }
+    };
+    let params = match serde_json::to_value(&open) {
+        Ok(params) => params,
+        Err(error) => {
+            orchestra.fail_task(task_id, format!("serialize task: {error}"));
+            return;
+        }
+    };
+    match ask_frontend(FRONTEND_TASK_OPEN, params, app, state) {
+        Ok(result) => match result.get("pane_id").and_then(Value::as_u64) {
+            Some(pane) => orchestra.attach_pane(task_id, pane as u32),
+            None => orchestra.fail_task(task_id, "worker tab returned no pane".to_string()),
+        },
+        Err((_, error)) => orchestra.fail_task(task_id, format!("open worker tab: {error}")),
+    }
+}
+
+fn finish_stop(stopped: Stopped, app: &tauri::AppHandle, state: &ControlState) -> Value {
+    for pane_id in &stopped.panes {
+        let params = json!(TaskCloseParams { pane_id: *pane_id });
+        if let Err((_, error)) = ask_frontend(FRONTEND_TASK_CLOSE, params, app, state) {
+            log::warn!("could not close worker pane {pane_id}: {error}");
+        }
+    }
+    let started = drain_queue(app, state);
+    json!({ "stopped": stopped.tasks, "started": started })
+}
+
+fn drain_queue(app: &tauri::AppHandle, state: &ControlState) -> Vec<String> {
+    let mut started = Vec::new();
+    loop {
+        let promoted = state.0.orchestra.promote();
+        if promoted.is_empty() {
+            return started;
+        }
+        for task_id in promoted {
+            start_task(&task_id, app, state);
+            started.push(task_id);
+        }
+    }
+}
+
+fn ask_frontend(
+    method: &str,
+    params: Value,
+    app: &tauri::AppHandle,
+    state: &ControlState,
+) -> Result<Value, OrchestraError> {
+    let mut id = generate_token().map_err(|error| ("internal_error", error))?;
+    id.truncate(32);
+    let request = ControlRequest {
+        protocol: PROTOCOL_VERSION,
+        id: format!("orchestra-{id}"),
+        token: String::new(),
+        method: method.to_string(),
+        params,
+        caller: CallerContext::default(),
+    };
+    let response = forward_to_frontend(request, app, state);
+    if response.ok {
+        Ok(response.result.unwrap_or(Value::Null))
+    } else {
+        let error = response.error.unwrap_or_else(|| {
+            terax_control_protocol::ControlError::new("frontend_error", "frontend request failed")
+        });
+        Err((
+            "frontend_error",
+            format!("{}: {}", error.code, error.message),
+        ))
     }
 }
 
@@ -903,9 +1129,60 @@ mod tests {
                 launcher_dir: None,
             })
             .is_ok());
-        assert!(state.shell_env(7).is_some());
+        assert!(state.shell_env(7, None).is_some());
         state.shutdown();
-        assert!(state.shell_env(7).is_none());
+        assert!(state.shell_env(7, None).is_none());
+    }
+
+    #[test]
+    fn pane_tokens_bind_the_caller_and_master_tokens_carry_no_pane() {
+        let state = ControlState::default();
+        let runtime = RuntimeInfo {
+            address: "127.0.0.1:4312".into(),
+            token: "a".repeat(64),
+            descriptor_path: PathBuf::from("unused-control.json"),
+            cli_path: None,
+            launcher_dir: None,
+        };
+        assert!(state.0.runtime.set(runtime.clone()).is_ok());
+        let first = state.shell_env(7, None).expect("pane env").token;
+        let other = state.shell_env(8, None).expect("pane env").token;
+        assert_ne!(first, runtime.token);
+        assert_ne!(first, other);
+        assert_eq!(first.len(), 64);
+        assert_eq!(state.authenticate(&runtime, &first), Some(Caller::Pane(7)));
+        assert_eq!(state.authenticate(&runtime, &other), Some(Caller::Pane(8)));
+        assert_eq!(
+            state.authenticate(&runtime, &runtime.token),
+            Some(Caller::External)
+        );
+        assert_eq!(state.authenticate(&runtime, &"b".repeat(64)), None);
+
+        let respawned = state.shell_env(7, None).expect("pane env").token;
+        assert_eq!(state.authenticate(&runtime, &first), None);
+        assert_eq!(
+            state.authenticate(&runtime, &respawned),
+            Some(Caller::Pane(7))
+        );
+    }
+
+    #[test]
+    fn pane_credentials_are_bounded_and_evict_the_oldest() {
+        let state = ControlState::default();
+        let runtime = RuntimeInfo {
+            address: "127.0.0.1:4312".into(),
+            token: "a".repeat(64),
+            descriptor_path: PathBuf::from("unused-control.json"),
+            cli_path: None,
+            launcher_dir: None,
+        };
+        assert!(state.0.runtime.set(runtime.clone()).is_ok());
+        let oldest = state.shell_env(1, None).expect("pane env").token;
+        for pane in 2..=(MAX_PANE_CREDENTIALS as u32 + 1) {
+            state.shell_env(pane, None);
+        }
+        assert_eq!(state.0.panes.lock().unwrap().len(), MAX_PANE_CREDENTIALS);
+        assert_eq!(state.authenticate(&runtime, &oldest), None);
     }
 
     #[test]

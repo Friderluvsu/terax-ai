@@ -2,9 +2,9 @@ mod agent_detect;
 mod da_filter;
 mod output;
 mod session;
+pub(crate) mod shell_init;
 #[cfg(unix)]
 mod unix_reader;
-pub(crate) mod shell_init;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -85,7 +85,9 @@ pub async fn pty_open(
         ),
     };
     let control_env = if control_env_allowed(&workspace) {
-        pane_id.and_then(|pane_id| control.shell_env(pane_id))
+        pane_id.and_then(|pane_id| {
+            control.shell_env(pane_id, cwd.as_deref().map(std::path::Path::new))
+        })
     } else {
         None
     };

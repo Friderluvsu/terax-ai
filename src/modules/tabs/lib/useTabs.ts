@@ -798,7 +798,12 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   }, [newBlockTab]);
 
   const newAgentGroupTab = useCallback(
-    (cwd: string | undefined, title: string, instances: AgentInstanceCount) => {
+    (
+      cwd: string | undefined,
+      title: string,
+      instances: AgentInstanceCount,
+      options: { spaceId?: string; activate?: boolean } = {},
+    ) => {
       const tabId = nextIdRef.current++;
       const { paneTree, leafIds: agentLeafIds } = createAgentPanePlan(
         instances,
@@ -810,7 +815,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         {
           id: tabId,
           kind: "terminal",
-          spaceId: activeSpaceIdRef.current,
+          spaceId: options.spaceId ?? activeSpaceIdRef.current,
           title,
           customTitle: title,
           cwd,
@@ -818,7 +823,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           activeLeafId: agentLeafIds[0],
         },
       ]);
-      setActiveId(tabId);
+      if (options.activate ?? true) setActiveId(tabId);
       return { tabId, leafIds: agentLeafIds };
     },
     [],

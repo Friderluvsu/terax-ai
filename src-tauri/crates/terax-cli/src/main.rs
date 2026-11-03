@@ -9,13 +9,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use terax_control_protocol::{
-    CallerContext, ControlDescriptor, ControlRequest, ControlResponse, OpenParams,
-    MAX_MESSAGE_BYTES, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN, METHOD_PING,
-    PROTOCOL_VERSION, SERVER_RESPONSE_ID,
+    validate_brief, validate_title, CallerContext, ControlDescriptor, ControlRequest,
+    ControlResponse, OpenParams, TaskInfo, MAX_BRIEF_BYTES, MAX_MESSAGE_BYTES, METHOD_CAPABILITIES,
+    METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING, METHOD_RUN_STOP,
+    METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_STOP, PROTOCOL_VERSION, SERVER_RESPONSE_ID,
+    TASK_AGENTS,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const IO_TIMEOUT: Duration = Duration::from_secs(7);
+// Starting a task creates a git worktree and may promote queued tasks.
+const ORCHESTRA_TIMEOUT: Duration = Duration::from_secs(300);
 const EXIT_USAGE: u8 = 2;
 const EXIT_UNAVAILABLE: u8 = 3;
 const EXIT_PROTOCOL: u8 = 4;
@@ -98,7 +102,7 @@ fn run(args: Vec<OsString>) -> Result<(), CliError> {
                 params,
                 caller: CallerContext { pane_id: caller },
             };
-            let response = send_request(&endpoint.address, &request)?;
+            let response = send_request(&endpoint.address, &request, response_timeout(method))?;
             if !response.ok {
                 let error = response.error.unwrap_or_else(|| {
                     terax_control_protocol::ControlError::new(
@@ -133,6 +137,9 @@ fn parse_args(mut args: Vec<OsString>) -> Result<Config, CliError> {
         Some("capabilities") => request_without_params(args, METHOD_CAPABILITIES)?,
         Some("identify") => request_without_params(args, METHOD_IDENTIFY)?,
         Some("open") => parse_open(args)?,
+        Some("orchestrate") => parse_orchestrate(args)?,
+        Some("task") => parse_task(args)?,
+        Some("run") => parse_run(args)?,
         Some("--") => {
             args.insert(0, command);
             parse_open(args)?
@@ -260,6 +267,141 @@ fn parse_open(args: Vec<OsString>) -> Result<Action, CliError> {
     })
 }
 
+fn response_timeout(method: &str) -> Duration {
+    match method {
+        METHOD_ORCHESTRATE | METHOD_TASK_CREATE | METHOD_TASK_STOP | METHOD_RUN_STOP => {
+            ORCHESTRA_TIMEOUT
+        }
+        _ => IO_TIMEOUT,
+    }
+}
+
+fn utf8_arg(value: &OsString, what: &str) -> Result<String, CliError> {
+    value
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| usage_error(format!("{what} must be valid UTF-8")))
+}
+
+fn parse_orchestrate(args: Vec<OsString>) -> Result<Action, CliError> {
+    no_extra_args(args, Action::Help)?;
+    let cwd = env::current_dir()
+        .map_err(|error| usage_error(format!("cannot read the current directory: {error}")))?;
+    let cwd = utf8_arg(&cwd.into_os_string(), "current directory")?;
+    Ok(Action::Request {
+        method: METHOD_ORCHESTRATE,
+        params: json!({ "cwd": cwd }),
+    })
+}
+
+fn parse_task(mut args: Vec<OsString>) -> Result<Action, CliError> {
+    if args.is_empty() {
+        return Err(usage_error(
+            "task requires a subcommand: create, list or stop",
+        ));
+    }
+    let sub = args.remove(0);
+    match sub.to_str() {
+        Some("create") => parse_task_create(args, read_brief),
+        Some("list") => request_without_params(args, METHOD_TASK_LIST),
+        Some("stop") => match args.as_slice() {
+            [task] => Ok(Action::Request {
+                method: METHOD_TASK_STOP,
+                params: json!({ "task": utf8_arg(task, "task id")? }),
+            }),
+            _ => Err(usage_error("task stop requires exactly one task id")),
+        },
+        _ => Err(usage_error(
+            "unknown task subcommand; use create, list or stop",
+        )),
+    }
+}
+
+fn parse_task_create(
+    args: Vec<OsString>,
+    read: impl Fn(&OsString) -> Result<String, CliError>,
+) -> Result<Action, CliError> {
+    let mut agent = None;
+    let mut brief = None;
+    let mut title = None;
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].to_str().unwrap_or("");
+        let value = args.get(index + 1);
+        let take = |name: &str| {
+            value
+                .ok_or_else(|| usage_error(format!("{name} requires a value")))
+                .cloned()
+        };
+        match flag {
+            "--agent" | "-a" => agent = Some(utf8_arg(&take("--agent")?, "agent")?),
+            "--brief" | "-b" => brief = Some(take("--brief")?),
+            "--title" | "-t" => title = Some(utf8_arg(&take("--title")?, "title")?),
+            other => return Err(usage_error(format!("unknown task create option '{other}'"))),
+        }
+        index += 2;
+    }
+    let agent = agent.unwrap_or_else(|| "claude".to_string());
+    if !TASK_AGENTS.contains(&agent.as_str()) {
+        return Err(usage_error(format!(
+            "--agent must be one of: {}",
+            TASK_AGENTS.join(", ")
+        )));
+    }
+    let brief = read(&brief.ok_or_else(|| usage_error("task create requires --brief <file|->"))?)?;
+    validate_brief(&brief).map_err(usage_error)?;
+    if let Some(title) = &title {
+        validate_title(title).map_err(usage_error)?;
+    }
+    let mut params = json!({ "agent": agent, "brief": brief });
+    if let Some(title) = title {
+        params["title"] = json!(title);
+    }
+    Ok(Action::Request {
+        method: METHOD_TASK_CREATE,
+        params,
+    })
+}
+
+fn read_brief(source: &OsString) -> Result<String, CliError> {
+    let mut bytes = Vec::new();
+    let limit = (MAX_BRIEF_BYTES + 1) as u64;
+    let result = if source == "-" {
+        std::io::stdin().take(limit).read_to_end(&mut bytes)
+    } else {
+        std::fs::File::open(source).and_then(|file| file.take(limit).read_to_end(&mut bytes))
+    };
+    result.map_err(|error| {
+        CliError::new(
+            "brief_unreadable",
+            format!("cannot read brief: {error}"),
+            EXIT_USAGE,
+        )
+    })?;
+    if bytes.len() > MAX_BRIEF_BYTES {
+        return Err(usage_error(format!(
+            "brief exceeds {MAX_BRIEF_BYTES} bytes"
+        )));
+    }
+    String::from_utf8(bytes).map_err(|_| usage_error("brief must be UTF-8 text"))
+}
+
+fn parse_run(mut args: Vec<OsString>) -> Result<Action, CliError> {
+    if args.first().and_then(|arg| arg.to_str()) != Some("stop") {
+        return Err(usage_error("run requires the subcommand: stop"));
+    }
+    args.remove(0);
+    let params = match args.as_slice() {
+        [] => json!({}),
+        [run] => json!({ "run": utf8_arg(run, "run id")? }),
+        _ => return Err(usage_error("run stop accepts at most one run id")),
+    };
+    Ok(Action::Request {
+        method: METHOD_RUN_STOP,
+        params,
+    })
+}
+
 fn usage_error(message: impl Into<String>) -> CliError {
     CliError::new("usage", message, EXIT_USAGE)
 }
@@ -383,7 +525,11 @@ fn process_is_alive(pid: u32) -> bool {
     }
 }
 
-fn send_request(address: &str, request: &ControlRequest) -> Result<ControlResponse, CliError> {
+fn send_request(
+    address: &str,
+    request: &ControlRequest,
+    read_timeout: Duration,
+) -> Result<ControlResponse, CliError> {
     let address = parse_loopback_address(address)?;
     let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(|error| {
         CliError::new(
@@ -392,7 +538,7 @@ fn send_request(address: &str, request: &ControlRequest) -> Result<ControlRespon
             EXIT_UNAVAILABLE,
         )
     })?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
+    stream.set_read_timeout(Some(read_timeout)).ok();
     stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
     write_request(&mut stream, request)?;
 
@@ -534,7 +680,67 @@ fn print_result(method: &str, result: Value, as_json: bool) {
                 println!("Opened {path} in Terax");
             }
         }
+        METHOD_ORCHESTRATE => {
+            let run = result.get("run").and_then(Value::as_str).unwrap_or("?");
+            let base = result.get("base").and_then(Value::as_str).unwrap_or("?");
+            println!("This pane orchestrates run {run} (tasks branch from {base})");
+        }
+        METHOD_TASK_CREATE => match result.get("task").cloned().map(serde_json::from_value) {
+            Some(Ok(task)) => print_task(&task),
+            _ => println!("{result}"),
+        },
+        METHOD_TASK_LIST => {
+            let tasks: Vec<TaskInfo> = result
+                .get("tasks")
+                .cloned()
+                .and_then(|tasks| serde_json::from_value(tasks).ok())
+                .unwrap_or_default();
+            if tasks.is_empty() {
+                println!("No tasks");
+            }
+            for task in &tasks {
+                print_task(task);
+            }
+        }
+        METHOD_TASK_STOP | METHOD_RUN_STOP => {
+            let list = |key: &str| {
+                result
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|ids| {
+                        ids.iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default()
+            };
+            println!("Stopped: {}", list("stopped"));
+            let started = list("started");
+            if !started.is_empty() {
+                println!("Started from queue: {started}");
+            }
+        }
         _ => println!("{result}"),
+    }
+}
+
+fn print_task(task: &TaskInfo) {
+    let status = serde_json::to_value(task.status)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let mut fields = vec![
+        task.id.as_str(),
+        status.as_str(),
+        task.agent.as_str(),
+        task.branch.as_str(),
+        task.worktree.as_str(),
+    ];
+    fields.extend(task.title.as_deref());
+    println!("{}", fields.join("\t"));
+    if let Some(error) = &task.error {
+        println!("  error: {error}");
     }
 }
 
@@ -542,7 +748,10 @@ fn print_help() {
     println!(
         "Terax command line interface\n\n\
 Usage:\n  terax <file> [--line <n>] [--no-focus] [--json]\n  terax open <file> [--line <n>] [--no-focus] [--json]\n  terax ping [--json]\n  terax capabilities [--json]\n  terax identify [--json]\n  terax --version\n\n\
-The app must be running. Commands launched in a Terax pane target that pane's space."
+Orchestration:\n  terax orchestrate                 make this pane the orchestrator of the current repository\n  terax task create --brief <file|-> [--agent claude] [--title <text>]\n  terax task list\n  terax task stop <task>\n  terax run stop [<run>]\n\n\
+The app must be running. Commands launched in a Terax pane target that pane's space.\n\
+Each task runs in its own worktree on branch task/<id>; at most 4 run at once and the rest queue.\n\
+Stopping keeps the worktree."
     );
 }
 
@@ -611,6 +820,72 @@ mod tests {
                 .to_string_lossy()
                 .as_ref()
         );
+    }
+
+    fn brief_stub(source: &OsString) -> Result<String, CliError> {
+        Ok(format!("brief from {}", source.to_string_lossy()))
+    }
+
+    #[test]
+    fn parses_orchestration_commands() {
+        let action = parse_task_create(
+            args(&["--brief", "b.md", "--agent", "codex", "--title", "Export"]),
+            brief_stub,
+        )
+        .expect("parse create");
+        assert_eq!(
+            action,
+            Action::Request {
+                method: METHOD_TASK_CREATE,
+                params: json!({ "agent": "codex", "brief": "brief from b.md", "title": "Export" }),
+            }
+        );
+        let action = parse_task_create(args(&["--brief", "-"]), brief_stub).expect("default");
+        let Action::Request { params, .. } = action else {
+            panic!("expected request");
+        };
+        assert_eq!(params["agent"], "claude");
+
+        assert!(parse_task_create(args(&[]), brief_stub).is_err());
+        assert!(parse_task_create(args(&["--brief"]), brief_stub).is_err());
+        assert!(parse_task_create(args(&["--brief", "b", "--agent", "sh"]), brief_stub).is_err());
+        assert!(parse_task_create(args(&["--brief", "b", "--title", "a\nb"]), brief_stub).is_err());
+
+        let config = parse_args(args(&["task", "stop", "ab12-1"])).expect("stop");
+        assert_eq!(
+            config.action,
+            Action::Request {
+                method: METHOD_TASK_STOP,
+                params: json!({ "task": "ab12-1" }),
+            }
+        );
+        assert!(parse_args(args(&["task", "stop"])).is_err());
+        assert!(parse_args(args(&["task", "explode"])).is_err());
+        let config = parse_args(args(&["run", "stop"])).expect("run stop");
+        assert_eq!(
+            config.action,
+            Action::Request {
+                method: METHOD_RUN_STOP,
+                params: json!({}),
+            }
+        );
+        assert!(parse_args(args(&["run", "stop", "a", "b"])).is_err());
+        let config = parse_args(args(&["orchestrate", "--json"])).expect("orchestrate");
+        assert!(config.json);
+        assert!(matches!(
+            config.action,
+            Action::Request {
+                method: METHOD_ORCHESTRATE,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn orchestration_requests_wait_longer_than_plain_requests() {
+        assert_eq!(response_timeout(METHOD_PING), IO_TIMEOUT);
+        assert_eq!(response_timeout(METHOD_TASK_LIST), IO_TIMEOUT);
+        assert_eq!(response_timeout(METHOD_TASK_CREATE), ORCHESTRA_TIMEOUT);
     }
 
     #[test]
@@ -683,8 +958,7 @@ mod tests {
 
     #[test]
     fn loopback_parsing_rejects_hostnames_and_remote_hosts() {
-        let error =
-            parse_loopback_address("localhost:4312").expect_err("reject hostname");
+        let error = parse_loopback_address("localhost:4312").expect_err("reject hostname");
         assert_eq!(error.code, "invalid_endpoint");
         let error = parse_loopback_address("127.0.0.1").expect_err("reject missing port");
         assert_eq!(error.code, "invalid_endpoint");

@@ -184,6 +184,9 @@ fn apply_common(
         cmd.env("TERAX_CONTROL_ADDR", &control.address);
         cmd.env("TERAX_CONTROL_TOKEN", &control.token);
         cmd.env("TERAX_PANE_ID", control.pane_id.to_string());
+        for (key, value) in &control.extra_env {
+            cmd.env(key, value);
+        }
         if let Some(path) = &control.cli_path {
             cmd.env("TERAX_CLI", path);
         }
@@ -1139,6 +1142,7 @@ mod tests {
             pane_id: 42,
             cli_path: Some("/app/terax-cli".into()),
             cli_bin_dir: Some(std::path::PathBuf::from("/app/bin")),
+            extra_env: vec![("TERAX_TASK_ID".into(), "abcd-1".into())],
         };
         apply_common(&mut command, None, false, Some(&control));
 
@@ -1151,6 +1155,7 @@ mod tests {
             Some(OsStr::new("secret"))
         );
         assert_eq!(command.get_env("TERAX_PANE_ID"), Some(OsStr::new("42")));
+        assert_eq!(command.get_env("TERAX_TASK_ID"), Some(OsStr::new("abcd-1")));
         assert_eq!(
             command.get_env("TERAX_CLI"),
             Some(OsStr::new("/app/terax-cli"))

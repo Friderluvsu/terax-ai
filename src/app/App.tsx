@@ -37,6 +37,7 @@ import { AiComposerProvider } from "@/modules/ai/lib/composer";
 import { native } from "@/modules/ai/lib/native";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
 import { useControlBridge } from "@/modules/control";
+import { useOrchestraTabs } from "@/modules/orchestra";
 import { useMobileBridge } from "@/modules/mobile";
 import {
   type EditorPaneHandle,
@@ -1586,12 +1587,20 @@ export default function App() {
     [openFileTab],
   );
 
+  const orchestraTabs = useOrchestraTabs({
+    tabsRef,
+    newAgentGroupTab,
+    newTabInSpace,
+    closeTab,
+  });
   useControlBridge({
     ready: spacesHydrated && launchCwdResolved,
     tabsRef,
     activeTabIdRef: activeIdRef,
     activeSpaceIdRef,
     onOpen: openControlFile,
+    onTaskOpen: orchestraTabs.openTask,
+    onTaskClose: orchestraTabs.closeTask,
   });
   useMobileBridge({ tabsRef, activeTabIdRef: activeIdRef, warmTab });
 

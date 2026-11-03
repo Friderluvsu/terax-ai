@@ -1,3 +1,10 @@
+import {
+  parseTaskClose,
+  parseTaskOpen,
+  type TaskOpened,
+  type TaskOpenRequest,
+  TaskRequestError,
+} from "@/modules/orchestra";
 import { DEFAULT_SPACE_ID, type Tab } from "@/modules/tabs/lib/useTabs";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -38,6 +45,8 @@ type UseControlBridgeOptions = {
   activeTabIdRef: RefObject<number>;
   activeSpaceIdRef: RefObject<string | null>;
   onOpen: (request: OpenRequest & { spaceId: string }) => number | null;
+  onTaskOpen: (request: TaskOpenRequest) => TaskOpened;
+  onTaskClose: (paneId: number) => boolean;
 };
 
 class RequestError extends Error {
@@ -102,6 +111,8 @@ export function useControlBridge({
   activeTabIdRef,
   activeSpaceIdRef,
   onOpen,
+  onTaskOpen,
+  onTaskClose,
 }: UseControlBridgeOptions): void {
   useEffect(() => {
     if (!ready) return;
@@ -156,13 +167,23 @@ export function useControlBridge({
           });
           return;
         }
+        if (request.method === "task.open") {
+          const result = onTaskOpen(parseTaskOpen(request.params));
+          await respond(request.id, { ok: true, result });
+          return;
+        }
+        if (request.method === "task.close") {
+          const closed = onTaskClose(parseTaskClose(request.params));
+          await respond(request.id, { ok: true, result: { closed } });
+          return;
+        }
         throw new RequestError(
           "unknown_method",
           `unsupported frontend method '${request.method}'`,
         );
       } catch (error) {
         const responseError =
-          error instanceof RequestError
+          error instanceof RequestError || error instanceof TaskRequestError
             ? { code: error.code, message: error.message }
             : { code: "frontend_error", message: String(error) };
         await respond(request.id, { ok: false, error: responseError }).catch(
@@ -195,5 +216,13 @@ export function useControlBridge({
         console.error("[terax] control bridge cleanup failed:", error);
       });
     };
-  }, [ready, tabsRef, activeTabIdRef, activeSpaceIdRef, onOpen]);
+  }, [
+    ready,
+    tabsRef,
+    activeTabIdRef,
+    activeSpaceIdRef,
+    onOpen,
+    onTaskOpen,
+    onTaskClose,
+  ]);
 }

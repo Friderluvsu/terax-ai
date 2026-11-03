@@ -7,13 +7,27 @@ pub const METHOD_PING: &str = "ping";
 pub const METHOD_CAPABILITIES: &str = "capabilities";
 pub const METHOD_IDENTIFY: &str = "identify";
 pub const METHOD_OPEN: &str = "open";
+pub const METHOD_ORCHESTRATE: &str = "orchestrate";
+pub const METHOD_TASK_CREATE: &str = "task.create";
+pub const METHOD_TASK_LIST: &str = "task.list";
+pub const METHOD_TASK_STOP: &str = "task.stop";
+pub const METHOD_RUN_STOP: &str = "run.stop";
 pub const SERVER_RESPONSE_ID: &str = "server";
 pub const METHODS: &[&str] = &[
     METHOD_PING,
     METHOD_CAPABILITIES,
     METHOD_IDENTIFY,
     METHOD_OPEN,
+    METHOD_ORCHESTRATE,
+    METHOD_TASK_CREATE,
+    METHOD_TASK_LIST,
+    METHOD_TASK_STOP,
+    METHOD_RUN_STOP,
 ];
+pub const MAX_BRIEF_BYTES: usize = 16 * 1024;
+const _: () = assert!(MAX_BRIEF_BYTES * 2 < MAX_MESSAGE_BYTES);
+pub const MAX_TASK_TITLE_CHARS: usize = 120;
+pub const TASK_AGENTS: &[&str] = &["claude", "codex", "gemini", "pi", "opencode", "grok"];
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct CallerContext {
@@ -126,6 +140,117 @@ fn default_focus() -> bool {
     true
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct OrchestrateParams {
+    pub cwd: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskCreateParams {
+    pub agent: String,
+    pub brief: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskStopParams {
+    pub task: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct RunStopParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Queued,
+    Starting,
+    Running,
+    Stopped,
+    Failed,
+    Interrupted,
+}
+
+impl TaskStatus {
+    pub fn holds_worker_slot(self) -> bool {
+        matches!(self, Self::Starting | Self::Running)
+    }
+
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Queued | Self::Starting | Self::Running)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskInfo {
+    pub id: String,
+    pub run: String,
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub status: TaskStatus,
+    pub branch: String,
+    pub worktree: String,
+    pub brief_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Sent to the UI when a task leaves the queue: it opens one worker tab.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskOpenParams {
+    pub task: String,
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub cwd: String,
+    pub brief_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskCloseParams {
+    pub pane_id: u32,
+}
+
+// Only tab and line breaks are allowed, which bounds JSON escaping at 2x and
+// keeps a brief inside one control message.
+pub fn validate_brief(brief: &str) -> Result<(), String> {
+    if brief.trim().is_empty() {
+        return Err("brief is empty".to_string());
+    }
+    if brief.len() > MAX_BRIEF_BYTES {
+        return Err(format!("brief exceeds {MAX_BRIEF_BYTES} bytes"));
+    }
+    if brief
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err("brief contains control characters".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_title(title: &str) -> Result<(), String> {
+    if title.trim().is_empty() || title.chars().count() > MAX_TASK_TITLE_CHARS {
+        return Err(format!(
+            "title must contain 1-{MAX_TASK_TITLE_CHARS} characters"
+        ));
+    }
+    if title.chars().any(char::is_control) {
+        return Err("title must be a single line".to_string());
+    }
+    Ok(())
+}
+
+pub const FRONTEND_TASK_OPEN: &str = "task.open";
+pub const FRONTEND_TASK_CLOSE: &str = "task.close";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,7 +298,47 @@ mod tests {
 
     #[test]
     fn methods_catalog_matches_the_wire_literals() {
-        assert_eq!(METHODS, &["ping", "capabilities", "identify", "open"]);
+        assert_eq!(
+            METHODS,
+            &[
+                "ping",
+                "capabilities",
+                "identify",
+                "open",
+                "orchestrate",
+                "task.create",
+                "task.list",
+                "task.stop",
+                "run.stop",
+            ]
+        );
+    }
+
+    #[test]
+    fn task_status_uses_snake_case_and_counts_only_live_workers() {
+        assert_eq!(
+            serde_json::to_value(TaskStatus::Interrupted).unwrap(),
+            json!("interrupted")
+        );
+        assert!(TaskStatus::Starting.holds_worker_slot());
+        assert!(TaskStatus::Running.holds_worker_slot());
+        assert!(!TaskStatus::Queued.holds_worker_slot());
+        assert!(TaskStatus::Queued.is_active());
+        assert!(!TaskStatus::Stopped.is_active());
+    }
+
+    #[test]
+    fn brief_and_title_validation_bounds_the_wire_size() {
+        assert!(validate_brief("do the thing\n\twith tabs").is_ok());
+        assert!(validate_brief("  \n").is_err());
+        assert!(validate_brief("bell\u{7}").is_err());
+        assert!(validate_brief(&"a".repeat(MAX_BRIEF_BYTES + 1)).is_err());
+        let worst = "\"".repeat(MAX_BRIEF_BYTES);
+        assert!(validate_brief(&worst).is_ok());
+        assert!(serde_json::to_string(&worst).unwrap().len() < MAX_MESSAGE_BYTES / 2 + 8);
+        assert!(validate_title("Export sessions").is_ok());
+        assert!(validate_title("two\nlines").is_err());
+        assert!(validate_title(&"x".repeat(MAX_TASK_TITLE_CHARS + 1)).is_err());
     }
 
     #[test]
@@ -221,9 +386,7 @@ mod tests {
 
     #[test]
     fn caller_context_round_trips_with_and_without_a_pane() {
-        let with_pane = CallerContext {
-            pane_id: Some(3),
-        };
+        let with_pane = CallerContext { pane_id: Some(3) };
         let value = serde_json::to_value(&with_pane).unwrap();
         assert_eq!(value, json!({ "pane_id": 3 }));
         let back: CallerContext = serde_json::from_value(value).unwrap();
