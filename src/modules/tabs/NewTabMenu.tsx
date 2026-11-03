@@ -3,6 +3,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -27,10 +28,10 @@ import {
   PencilEdit02Icon,
   PlusSignIcon,
   DashboardSquare01Icon,
-  WorkflowSquare01Icon,
+  ServerStack01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useRef, useState } from "react";
+import { type ComponentProps, useRef, useState } from "react";
 
 type Props = {
   onNew: () => void;
@@ -42,7 +43,6 @@ type Props = {
   onNewSsh: (alias: string) => void;
   onConnectSsh: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
-  onNewOrchestrator: () => void;
   onNewTaskBoard: () => void;
 };
 
@@ -56,7 +56,6 @@ export function NewTabMenu({
   onNewSsh,
   onConnectSsh,
   onLaunchAgents,
-  onNewOrchestrator,
   onNewTaskBoard,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -99,7 +98,7 @@ export function NewTabMenu({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
-              className="min-w-56"
+              className="min-w-48"
               onCloseAutoFocus={(event) => {
                 event.preventDefault();
                 if (!openLauncherAfterMenuClose.current) return;
@@ -108,130 +107,60 @@ export function NewTabMenu({
                 requestAnimationFrame(() => setLauncherOpen(true));
               }}
             >
-              <DropdownMenuItem onSelect={onNew}>
-                <HugeiconsIcon
-                  icon={ComputerTerminal02Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Terminal</span>
-                <span className="text-xs text-muted-foreground">
-                  {fmtShortcut(MOD_KEY, "T")}
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onNewBlock}>
-                <HugeiconsIcon
-                  icon={ComputerTerminal02Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Blocks</span>
-                <span className="text-xs text-muted-foreground">
-                  {fmtShortcut(MOD_KEY, SHIFT_KEY, "T")}
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={openLauncher}>
-                <HugeiconsIcon
-                  icon={AiBrowserIcon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Agents</span>
-                <HugeiconsIcon
-                  icon={ArrowRight01Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                  className="text-muted-foreground"
-                />
-              </DropdownMenuItem>
-              <DropdownMenuItem
+              <Item
+                icon={ComputerTerminal02Icon}
+                label="Terminal"
+                onSelect={onNew}
+                keys={fmtShortcut(MOD_KEY, "T")}
+              />
+              <Item
+                icon={ComputerTerminal02Icon}
+                label="Blocks"
+                onSelect={onNewBlock}
+                keys={fmtShortcut(MOD_KEY, SHIFT_KEY, "T")}
+              />
+              <Item
+                icon={IncognitoIcon}
+                label="Privacy"
+                onSelect={onNewPrivate}
+                keys={fmtShortcut(MOD_KEY, "R")}
+              />
+              <Separator />
+              <Item
+                icon={AiBrowserIcon}
+                label="Agents"
+                onSelect={openLauncher}
+                more
+              />
+              <Item
+                icon={DashboardSquare01Icon}
+                label="Task board"
                 onSelect={onNewTaskBoard}
-                className="items-start"
-              >
-                <HugeiconsIcon
-                  icon={DashboardSquare01Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                  className="mt-0.5"
-                />
-                <span className="flex flex-1 flex-col">
-                  <span>Task board</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Plan a job, watch any agents work side by side
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={onNewOrchestrator}
-                className="items-start"
-              >
-                <HugeiconsIcon
-                  icon={WorkflowSquare01Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                  className="mt-0.5"
-                />
-                <span className="flex flex-1 flex-col">
-                  <span>Orchestrator</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Describe a job, Claude splits it across agents
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onNewPrivate}>
-                <HugeiconsIcon
-                  icon={IncognitoIcon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Privacy</span>
-                <span className="text-xs text-muted-foreground">
-                  {fmtShortcut(MOD_KEY, "R")}
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onNewEditor}>
-                <HugeiconsIcon
-                  icon={PencilEdit02Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Editor</span>
-                <span className="text-xs text-muted-foreground">
-                  {fmtShortcut(MOD_KEY, "E")}
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onNewPreview}>
-                <HugeiconsIcon
-                  icon={Globe02Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Preview</span>
-                <span className="text-xs text-muted-foreground">
-                  {fmtShortcut(MOD_KEY, "P")}
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onNewGitGraph}>
-                <HugeiconsIcon
-                  icon={GitBranchIcon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Git Graph</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onConnectSsh}>
-                <HugeiconsIcon
-                  icon={ComputerTerminal02Icon}
-                  size={14}
-                  strokeWidth={1.75}
-                />
-                <span className="flex-1">Connect to SSH host...</span>
-              </DropdownMenuItem>
-              {sshHosts.length > 0 && (
+              />
+              <Separator />
+              <Item
+                icon={PencilEdit02Icon}
+                label="Editor"
+                onSelect={onNewEditor}
+                keys={fmtShortcut(MOD_KEY, "E")}
+              />
+              <Item
+                icon={Globe02Icon}
+                label="Preview"
+                onSelect={onNewPreview}
+                keys={fmtShortcut(MOD_KEY, "P")}
+              />
+              <Item
+                icon={GitBranchIcon}
+                label="Git Graph"
+                onSelect={onNewGitGraph}
+              />
+              <Separator />
+              {sshHosts.length > 0 ? (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <HugeiconsIcon
-                      icon={ComputerTerminal02Icon}
+                      icon={ServerStack01Icon}
                       size={14}
                       strokeWidth={1.75}
                     />
@@ -246,8 +175,18 @@ export function NewTabMenu({
                         {host.alias}
                       </DropdownMenuItem>
                     ))}
+                    <Separator />
+                    <DropdownMenuItem onSelect={onConnectSsh}>
+                      Connect...
+                    </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+              ) : (
+                <Item
+                  icon={ServerStack01Icon}
+                  label="SSH..."
+                  onSelect={onConnectSsh}
+                />
               )}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -274,5 +213,41 @@ export function NewTabMenu({
         />
       </PopoverContent>
     </Popover>
+  );
+}
+
+function Separator() {
+  return <DropdownMenuSeparator className="my-1 border-t border-border/30" />;
+}
+
+function Item({
+  icon,
+  label,
+  onSelect,
+  keys,
+  more,
+}: {
+  icon: ComponentProps<typeof HugeiconsIcon>["icon"];
+  label: string;
+  onSelect: () => void;
+  keys?: string;
+  more?: boolean;
+}) {
+  return (
+    <DropdownMenuItem onSelect={onSelect}>
+      <HugeiconsIcon icon={icon} size={14} strokeWidth={1.75} />
+      <span className="flex-1">{label}</span>
+      {keys ? (
+        <span className="text-xs text-muted-foreground">{keys}</span>
+      ) : null}
+      {more ? (
+        <HugeiconsIcon
+          icon={ArrowRight01Icon}
+          size={14}
+          strokeWidth={1.75}
+          className="text-muted-foreground"
+        />
+      ) : null}
+    </DropdownMenuItem>
   );
 }

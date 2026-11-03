@@ -4,8 +4,8 @@ export type Size = { w: number; h: number };
 
 export const TILE_SIZE: Size = { w: 560, h: 340 };
 export const MIN_TILE: Size = { w: 280, h: 160 };
-export const MIN_ZOOM = 0.5;
-export const MAX_ZOOM = 1.5;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 1.5;
 const GAP = 24;
 const COLUMNS = 3;
 

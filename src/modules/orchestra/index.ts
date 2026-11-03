@@ -6,4 +6,3 @@ export {
   TaskRequestError,
 } from "./lib/protocol";
 export { type TaskOpened, useOrchestraTabs } from "./useOrchestraTabs";
-export { OrchestraPill } from "./components/OrchestraPill";

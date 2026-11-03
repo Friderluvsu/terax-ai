@@ -336,7 +336,6 @@ pub fn run() {
             control::control_frontend_ready,
             control::control_respond,
             control::orchestra_tasks,
-            control::orchestra_orchestrator_files,
             control::orchestra_stop,
             control::orchestra_board_open,
             control::orchestra_board_create,

@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  orchestratorLaunchCommand,
-  parseOrchestratorFiles,
   parseTaskClose,
   parseTaskOpen,
   parseTaskSend,
@@ -74,19 +72,6 @@ describe("parseTaskSend", () => {
       parseTaskSend({ pane_id: 3, text: "x".repeat(4097) }),
     ).toThrow();
     expect(() => parseTaskSend({ text: "x" })).toThrow();
-  });
-});
-
-describe("orchestrator launch", () => {
-  it("adds the session settings and system prompt file", () => {
-    const files = parseOrchestratorFiles({
-      guide_path: "/a b/guide.md",
-      settings_path: "/a b/settings.json",
-    });
-    expect(orchestratorLaunchCommand("claude --model opus", files, false)).toBe(
-      "claude --model opus --settings '/a b/settings.json' --append-system-prompt-file '/a b/guide.md'",
-    );
-    expect(() => parseOrchestratorFiles({ guide_path: "x" })).toThrow();
   });
 });
 

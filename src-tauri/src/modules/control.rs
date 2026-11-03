@@ -551,19 +551,6 @@ pub fn agent_signal(app: &tauri::AppHandle, pane_id: u32, kind: &str) {
     }
 }
 
-/// Paths the frontend passes to Claude when it opens an Orchestrator tab.
-#[tauri::command]
-pub fn orchestra_orchestrator_files(app: tauri::AppHandle) -> Result<Value, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("orchestra")
-        .join("orchestrator");
-    let files = crate::modules::orchestra::orchestrator::prepare(&dir)?;
-    Ok(json!({ "guide_path": files.guide, "settings_path": files.settings }))
-}
-
 #[tauri::command]
 pub fn orchestra_tasks(state: tauri::State<'_, ControlState>) -> Result<Vec<TaskInfo>, String> {
     state

@@ -22,8 +22,6 @@ import {
 import {
   ORCHESTRA_SPACE_ID,
   ORCHESTRA_SPACE_NAME,
-  orchestratorLaunchCommand,
-  parseOrchestratorFiles,
   type TaskOpenRequest,
   TaskRequestError,
   workerLaunchCommand,
@@ -172,39 +170,6 @@ export function useOrchestraTabs({
     return true;
   }, []);
 
-  const openOrchestrator = useCallback(
-    async (cwd: string | undefined) => {
-      const stored = usePreferencesStore.getState().agentLaunchCommands.claude;
-      const command = validateAgentLaunchCommand(stored);
-      if (!command.ok) {
-        toast.error(`Claude start command: ${command.error}`);
-        return;
-      }
-      let files: ReturnType<typeof parseOrchestratorFiles>;
-      try {
-        files = parseOrchestratorFiles(
-          await invoke("orchestra_orchestrator_files"),
-        );
-      } catch (error) {
-        toast.error(`Could not start the orchestrator: ${String(error)}`);
-        return;
-      }
-      const { leafIds } = newAgentGroupTab(cwd, "Orchestrator", 1);
-      const leafId = leafIds[0];
-      const hooksReady = invoke("agent_enable_hooks", {
-        agent: "claude",
-      }).catch((error) => {
-        console.warn("[terax] could not enable claude notifications:", error);
-      });
-      await Promise.all([whenSessionReady(leafId), hooksReady]);
-      const line = orchestratorLaunchCommand(command.command, files);
-      if (!writeToSession(leafId, `${line}\r`)) {
-        console.error(`[terax] orchestrator terminal ${leafId} closed`);
-      }
-    },
-    [newAgentGroupTab],
-  );
-
   const openBoard = useCallback(
     async (cwd: string | undefined) => {
       if (!cwd) {
@@ -228,5 +193,5 @@ export function useOrchestraTabs({
     [tabsRef, activeSpaceIdRef, setActiveId, newBoardTab],
   );
 
-  return { openTask, closeTask, sendTask, openOrchestrator, openBoard };
+  return { openTask, closeTask, sendTask, openBoard };
 }

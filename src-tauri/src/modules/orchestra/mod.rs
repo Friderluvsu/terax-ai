@@ -3,7 +3,6 @@
 //! worker can never start other workers.
 
 pub mod checks;
-pub mod orchestrator;
 pub mod plan;
 pub mod run;
 pub mod worktree;

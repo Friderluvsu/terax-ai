@@ -119,7 +119,7 @@ export function parseTaskSend(params: unknown): TaskSendRequest {
 
 // Only the brief path is passed on the command line; the brief itself can be
 // long and is never pasted into the shell.
-export function workerPrompt(request: TaskOpenRequest): string {
+function workerPrompt(request: TaskOpenRequest): string {
   const dir = parentDir(request.briefPath);
   const sep = request.briefPath.includes("\\") ? "\\" : "/";
   return [
@@ -144,35 +144,6 @@ const MODEL_FLAG: Partial<Record<AgentLauncherId, string>> = {
 function parentDir(path: string): string {
   const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return cut > 0 ? path.slice(0, cut) : path;
-}
-
-export type OrchestratorFiles = { guidePath: string; settingsPath: string };
-
-export function parseOrchestratorFiles(value: unknown): OrchestratorFiles {
-  const record =
-    typeof value === "object" && value !== null
-      ? (value as Record<string, unknown>)
-      : {};
-  return {
-    guidePath: requireText(record.guide_path, "guide_path", 4096),
-    settingsPath: requireText(record.settings_path, "settings_path", 4096),
-  };
-}
-
-// The guide arrives as a system prompt file and the settings pre-approve only
-// the Terax CLI, so the session needs no skill or config install.
-export function orchestratorLaunchCommand(
-  command: string,
-  files: OrchestratorFiles,
-  windows?: boolean,
-): string {
-  return [
-    command,
-    "--settings",
-    quoteShellArg(files.settingsPath, windows),
-    "--append-system-prompt-file",
-    quoteShellArg(files.guidePath, windows),
-  ].join(" ");
 }
 
 export function workerLaunchCommand(
