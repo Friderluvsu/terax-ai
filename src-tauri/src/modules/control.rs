@@ -21,7 +21,9 @@ use terax_control_protocol::{
     SERVER_RESPONSE_ID,
 };
 
-use crate::modules::orchestra::{checks, Caller, Orchestra, OrchestraError, Stopped};
+use crate::modules::orchestra::{
+    checks, plan, worktree, Caller, Created, Orchestra, OrchestraError, Stopped,
+};
 use crate::modules::{fs, workspace};
 
 const CONTROL_EVENT: &str = "terax:control-request";
@@ -390,7 +392,7 @@ fn route_request(
     request.caller = CallerContext {
         pane_id: match caller {
             Caller::Pane(pane) => Some(pane),
-            Caller::External => None,
+            Caller::External | Caller::Board => None,
         },
     };
 
@@ -472,12 +474,7 @@ fn route_orchestra(
         METHOD_TASK_CREATE => {
             let params: TaskCreateParams = parse_params(request.params)?;
             let created = orchestra.create_task(caller, params)?;
-            let id = created.task.id.clone();
-            close_panes(created.evicted, app, state);
-            if created.start {
-                start_task(&id, app, state);
-                drain_queue(app, state);
-            }
+            let id = launch_created(created, app, state);
             let task = orchestra
                 .list(caller)?
                 .into_iter()
@@ -595,6 +592,87 @@ pub async fn orchestra_stop(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Opens (or reuses) the board run for the repository at `cwd`.
+#[tauri::command]
+pub async fn orchestra_board_open(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ControlState>,
+    cwd: String,
+    check: Option<String>,
+) -> Result<Value, String> {
+    let state = state.inner().clone();
+    blocking(move || {
+        let cwd = validate_orchestrate_cwd(&cwd, &app)?;
+        let run = state.0.orchestra.orchestrate(Caller::Board, &cwd, check)?;
+        Ok(json!({ "run": run.id, "repo": run.repo, "base": run.base, "check": run.check }))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn orchestra_board_create(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ControlState>,
+    run: String,
+    params: TaskCreateParams,
+) -> Result<Value, String> {
+    let state = state.inner().clone();
+    blocking(move || {
+        let created = state.0.orchestra.create_board_task(&run, params)?;
+        let id = launch_created(created, &app, &state);
+        Ok(json!({ "task": id }))
+    })
+    .await
+}
+
+/// Asks a headless agent to split `job` into task drafts. Read-only: the
+/// planner runs in plan mode or a read-only sandbox.
+#[tauri::command]
+pub async fn orchestra_plan(
+    app: tauri::AppHandle,
+    cwd: String,
+    agent: String,
+    job: String,
+) -> Result<Vec<plan::PlannedTask>, String> {
+    blocking(move || {
+        let cwd = validate_orchestrate_cwd(&cwd, &app)?;
+        let repo = worktree::repo_toplevel(&cwd).map_err(|error| ("not_a_repository", error))?;
+        plan::run(&agent, &job, &repo).map_err(|error| ("plan_failed", error))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn orchestra_result(
+    state: tauri::State<'_, ControlState>,
+    task: String,
+) -> Result<Value, String> {
+    let state = state.inner().clone();
+    blocking(move || {
+        let result = state.0.orchestra.result(Caller::Board, &task)?;
+        Ok(json!({ "result": result.result, "check_log": result.check_log }))
+    })
+    .await
+}
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, OrchestraError> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || work().map_err(|(_, message)| message))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn launch_created(created: Created, app: &tauri::AppHandle, state: &ControlState) -> String {
+    let id = created.task.id.clone();
+    close_panes(created.evicted, app, state);
+    if created.start {
+        start_task(&id, app, state);
+        drain_queue(app, state);
+    }
+    id
 }
 
 fn validate_orchestrate_cwd(cwd: &str, app: &tauri::AppHandle) -> Result<PathBuf, OrchestraError> {

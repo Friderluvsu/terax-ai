@@ -26,6 +26,7 @@ import {
   IncognitoIcon,
   PencilEdit02Icon,
   PlusSignIcon,
+  DashboardSquare01Icon,
   WorkflowSquare01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -42,6 +43,7 @@ type Props = {
   onConnectSsh: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
   onNewOrchestrator: () => void;
+  onNewTaskBoard: () => void;
 };
 
 export function NewTabMenu({
@@ -55,6 +57,7 @@ export function NewTabMenu({
   onConnectSsh,
   onLaunchAgents,
   onNewOrchestrator,
+  onNewTaskBoard,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const sshHosts = useSshHosts(menuOpen);
@@ -140,6 +143,23 @@ export function NewTabMenu({
                   strokeWidth={1.75}
                   className="text-muted-foreground"
                 />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={onNewTaskBoard}
+                className="items-start"
+              >
+                <HugeiconsIcon
+                  icon={DashboardSquare01Icon}
+                  size={14}
+                  strokeWidth={1.75}
+                  className="mt-0.5"
+                />
+                <span className="flex flex-1 flex-col">
+                  <span>Task board</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Plan a job, watch any agents work side by side
+                  </span>
+                </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={onNewOrchestrator}

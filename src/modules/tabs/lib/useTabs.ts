@@ -39,6 +39,8 @@ import {
 
 // Matches the renderer slot pool size — over this we'd evict an active leaf.
 export const MAX_PANES_PER_TAB = 4;
+// A board holds its console plus the four resident orchestra workers.
+export const MAX_BOARD_LEAVES = 5;
 
 type TabBase = {
   spaceId: string;
@@ -58,6 +60,9 @@ export type TerminalTab = TabBase & {
   private?: boolean;
   /** User-set label that overrides the cwd-derived name. Survives cd. */
   customTitle?: string;
+  /** Orchestra board shown as a canvas of tiles instead of split panes.
+   *  `repo` is pinned because `cwd` follows whichever tile has focus. */
+  board?: { run: string; repo: string };
 };
 
 export type DocView = "code" | "split" | "preview";
@@ -790,6 +795,54 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     return tabId;
   }, []);
 
+  const newBoardTab = useCallback((board: { run: string; repo: string }) => {
+    const cwd = board.repo;
+    const tabId = nextIdRef.current++;
+    const leafId = nextIdRef.current++;
+    setTabs((t) => [
+      ...t,
+      {
+        id: tabId,
+        kind: "terminal",
+        spaceId: activeSpaceIdRef.current,
+        title: "Task board",
+        customTitle: "Task board",
+        cwd,
+        paneTree: { kind: "leaf", id: leafId, cwd },
+        activeLeafId: leafId,
+        board,
+      },
+    ]);
+    setActiveId(tabId);
+    return tabId;
+  }, []);
+
+  /** Adds a worker tile to a board without moving focus. The caller checks
+   *  `MAX_BOARD_LEAVES` first; the ids are allocated up front so they are
+   *  known before the state update runs. */
+  const addBoardLeaf = useCallback((tabId: number, cwd: string) => {
+    const splitId = nextIdRef.current++;
+    const leafId = nextIdRef.current++;
+    setTabs((curr) =>
+      curr.map((t) => {
+        if (t.id !== tabId || t.kind !== "terminal" || !t.board) return t;
+        const leaves = leafIds(t.paneTree);
+        if (leaves.length >= MAX_BOARD_LEAVES) return t;
+        const last = leaves[leaves.length - 1];
+        const paneTree = splitLeaf(
+          t.paneTree,
+          last,
+          splitId,
+          leafId,
+          "row",
+          cwd,
+        );
+        return { ...t, paneTree };
+      }),
+    );
+    return leafId;
+  }, []);
+
   useEffect(() => {
     if (!import.meta.env?.DEV || typeof window === "undefined") return;
     (
@@ -1486,6 +1539,8 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     setOverrideLanguage,
     newTab,
     newBlockTab,
+    newBoardTab,
+    addBoardLeaf,
     newAgentTab,
     newAgentGroupTab,
     newPrivateTab,

@@ -3,8 +3,9 @@
 //! worker can never start other workers.
 
 pub mod checks;
-pub mod run;
 pub mod orchestrator;
+pub mod plan;
+pub mod run;
 pub mod worktree;
 
 use std::collections::{BTreeMap, HashMap};
@@ -28,6 +29,8 @@ pub enum Caller {
     /// the human, with no pane.
     External,
     Pane(u32),
+    /// The Terax board UI: owns board runs and may create tasks in them.
+    Board,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -193,12 +196,14 @@ impl Orchestra {
         cwd: &Path,
         check: Option<String>,
     ) -> Result<Run, OrchestraError> {
-        let Caller::Pane(pane_id) = caller else {
-            return Err(forbidden("orchestrate must be run from a Terax pane"));
-        };
         if let Some(check) = &check {
             validate_check_command(check).map_err(|error| ("invalid_params", error))?;
         }
+        let pane_id = match caller {
+            Caller::Pane(pane_id) => pane_id,
+            Caller::Board => return self.board_run(cwd, check),
+            Caller::External => return Err(forbidden("orchestrate must be run from a Terax pane")),
+        };
         let root = {
             let mut inner = self.lock();
             match Self::role(&inner, pane_id) {
@@ -240,6 +245,7 @@ impl Orchestra {
             created_at_ms: now_ms(),
             stopped: false,
             check,
+            board: false,
             tasks: Vec::new(),
         };
         inner.runs.insert(id.clone(), run.clone());
@@ -248,8 +254,69 @@ impl Orchestra {
         Ok(run)
     }
 
+    /// One live board run per repository; reopening the board reuses it.
+    fn board_run(&self, cwd: &Path, check: Option<String>) -> Result<Run, OrchestraError> {
+        let root = self.lock().root.clone().ok_or_else(unavailable)?;
+        let repo = worktree::repo_toplevel(cwd).map_err(|error| ("not_a_repository", error))?;
+        if repo.starts_with(&root) || root.starts_with(&repo) {
+            return Err(forbidden("a task worktree cannot orchestrate"));
+        }
+        let canon = crate::modules::fs::to_canon(&repo);
+        let base = worktree::current_base(&repo).map_err(|error| ("git_failed", error))?;
+        let mut inner = self.lock();
+        let existing = inner
+            .runs
+            .values()
+            .find(|run| run.board && run.repo == canon)
+            .map(|run| run.id.clone());
+        if let Some(id) = existing {
+            let run = inner.runs.get_mut(&id).expect("run found above");
+            // Stop all ends the tasks, not the board that shows them.
+            run.stopped = false;
+            if check.is_some() {
+                run.check = check;
+            }
+            let run = run.clone();
+            self.commit(inner, &[&id])?;
+            return Ok(run);
+        }
+        let id = loop {
+            let id = random_id()?;
+            if !inner.runs.contains_key(&id) {
+                break id;
+            }
+        };
+        let run = Run {
+            id: id.clone(),
+            repo: canon,
+            base,
+            created_at_ms: now_ms(),
+            stopped: false,
+            check,
+            board: true,
+            tasks: Vec::new(),
+        };
+        inner.runs.insert(id.clone(), run.clone());
+        self.commit(inner, &[&id])?;
+        Ok(run)
+    }
+
+    /// Adds a task to a board run on behalf of the board UI.
+    pub fn create_board_task(
+        &self,
+        run_id: &str,
+        params: TaskCreateParams,
+    ) -> Result<Created, OrchestraError> {
+        let inner = self.lock();
+        if !inner.runs.get(run_id).is_some_and(|run| run.board) {
+            return Err(("not_found", format!("unknown board run {run_id}")));
+        }
+        self.create_in(inner, run_id.to_string(), params)
+    }
+
     fn require_orchestrator(inner: &Inner, caller: Caller) -> Result<String, OrchestraError> {
         match caller {
+            Caller::Board => Err(forbidden("the board creates tasks in its own run")),
             Caller::External => Err(forbidden(
                 "tasks can only be created from an orchestrator pane",
             )),
@@ -269,8 +336,17 @@ impl Orchestra {
         caller: Caller,
         params: TaskCreateParams,
     ) -> Result<Created, OrchestraError> {
-        let mut inner = self.lock();
+        let inner = self.lock();
         let run_id = Self::require_orchestrator(&inner, caller)?;
+        self.create_in(inner, run_id, params)
+    }
+
+    fn create_in(
+        &self,
+        mut inner: MutexGuard<'_, Inner>,
+        run_id: String,
+        params: TaskCreateParams,
+    ) -> Result<Created, OrchestraError> {
         if !TASK_AGENTS.contains(&params.agent.as_str()) {
             return Err((
                 "invalid_params",
@@ -342,7 +418,7 @@ impl Orchestra {
     /// Creates the worktree for a task in `Starting`. Git runs without the lock;
     /// the slot stays held by the `Starting` status meanwhile.
     pub fn prepare_worktree(&self, task_id: &str) -> Result<TaskOpenParams, OrchestraError> {
-        let (root, repo, base, task) = {
+        let (root, repo, base, board, task) = {
             let inner = self.lock();
             let root = inner.root.clone().ok_or_else(unavailable)?;
             let (run, task) = find_task(&inner.runs, task_id)?;
@@ -353,6 +429,7 @@ impl Orchestra {
                 root,
                 PathBuf::from(&run.repo),
                 run.base.clone(),
+                run.board.then(|| run.id.clone()),
                 task.clone(),
             )
         };
@@ -388,6 +465,7 @@ impl Orchestra {
             brief_path: task.brief_path,
             model: task.model,
             settings_path,
+            board,
         })
     }
 
@@ -496,7 +574,7 @@ impl Orchestra {
     /// human sees everything. Workers are refused.
     fn scope(inner: &Inner, caller: Caller) -> Result<Option<String>, OrchestraError> {
         match caller {
-            Caller::External => Ok(None),
+            Caller::External | Caller::Board => Ok(None),
             Caller::Pane(pane_id) => match Self::role(inner, pane_id) {
                 Role::Worker => Err(forbidden("worker panes cannot manage tasks")),
                 Role::Orchestrator(run) => Ok(Some(run)),
@@ -861,6 +939,50 @@ mod tests {
                 .unwrap_err()
                 .0,
             "forbidden"
+        );
+    }
+
+    #[test]
+    fn the_board_owns_one_run_per_repository() {
+        let f = fixture();
+        let run = f
+            .orchestra
+            .orchestrate(Caller::Board, f.repo.path(), None)
+            .unwrap();
+        assert!(run.board);
+        let again = f
+            .orchestra
+            .orchestrate(Caller::Board, f.repo.path(), Some("true".into()))
+            .unwrap();
+        assert_eq!(again.id, run.id);
+        assert_eq!(again.check.as_deref(), Some("true"));
+        f.orchestra.stop_run(Caller::External, None).unwrap();
+        let reopened = f
+            .orchestra
+            .orchestrate(Caller::Board, f.repo.path(), None)
+            .unwrap();
+        assert_eq!(reopened.id, run.id);
+        assert!(!reopened.stopped);
+        assert_eq!(
+            f.orchestra
+                .create_task(Caller::Board, params("x"))
+                .unwrap_err()
+                .0,
+            "forbidden"
+        );
+        let created = f.orchestra.create_board_task(&run.id, params("x")).unwrap();
+        assert!(created.start);
+        let open = f.orchestra.prepare_worktree(&created.task.id).unwrap();
+        assert_eq!(open.board.as_deref(), Some(run.id.as_str()));
+        let pane_run = f.orchestrate(1);
+        assert!(!pane_run.board);
+        assert_ne!(pane_run.id, run.id);
+        assert_eq!(
+            f.orchestra
+                .create_board_task(&pane_run.id, params("x"))
+                .unwrap_err()
+                .0,
+            "not_found"
         );
     }
 

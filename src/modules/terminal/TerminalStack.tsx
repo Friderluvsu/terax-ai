@@ -1,11 +1,17 @@
 import { envForSpace, useSpaces } from "@/modules/spaces";
 import type { Tab } from "@/modules/tabs";
 import type { TerminalSearchController } from "@/modules/terminal/search/TerminalSearchController";
-import { useEffect, useMemo, useRef } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
 import { selectLiveTerminals } from "./lib/liveTerminals";
-import { leafIds } from "./lib/panes";
+import { findLeafCwd, leafIds } from "./lib/panes";
+import {
+  beginTerminalResizeInteraction,
+  endTerminalResizeInteraction,
+} from "./lib/terminalResizeInteraction";
 import { PaneTreeView } from "./PaneTreeView";
 import type { TerminalPaneHandle } from "./TerminalPane";
+
+const BoardView = lazy(() => import("@/modules/orchestra/board/BoardView"));
 
 type Props = {
   tabs: Tab[];
@@ -93,15 +99,46 @@ export function TerminalStack({
             }}
             aria-hidden={!tabVisible}
           >
-            <PaneTreeView
-              node={t.paneTree}
-              env={envForSpace(t.spaceId, spaces)}
-              tabVisible={tabVisible}
-              activeLeafId={t.activeLeafId}
-              blocks={t.blocks ?? false}
-              onFocusLeaf={(leafId) => onFocusLeaf(t.id, leafId)}
-              getBundle={getBundle}
-            />
+            {t.board ? (
+              <Suspense fallback={null}>
+                <BoardView
+                  run={t.board.run}
+                  cwd={t.board.repo}
+                  leaves={leafIds(t.paneTree)}
+                  activeLeafId={t.activeLeafId}
+                  renderLeaf={(leafId, visible) => (
+                    <PaneTreeView
+                      node={{
+                        kind: "leaf",
+                        id: leafId,
+                        cwd: findLeafCwd(t.paneTree, leafId),
+                      }}
+                      env={envForSpace(t.spaceId, spaces)}
+                      tabVisible={tabVisible && visible}
+                      activeLeafId={t.activeLeafId}
+                      blocks={false}
+                      onFocusLeaf={(id) => onFocusLeaf(t.id, id)}
+                      getBundle={getBundle}
+                    />
+                  )}
+                  onResizing={(token, active) =>
+                    active
+                      ? beginTerminalResizeInteraction(token)
+                      : endTerminalResizeInteraction(token)
+                  }
+                />
+              </Suspense>
+            ) : (
+              <PaneTreeView
+                node={t.paneTree}
+                env={envForSpace(t.spaceId, spaces)}
+                tabVisible={tabVisible}
+                activeLeafId={t.activeLeafId}
+                blocks={t.blocks ?? false}
+                onFocusLeaf={(leafId) => onFocusLeaf(t.id, leafId)}
+                getBundle={getBundle}
+              />
+            )}
           </div>
         );
       })}

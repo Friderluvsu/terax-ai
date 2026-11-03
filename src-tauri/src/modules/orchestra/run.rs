@@ -21,6 +21,9 @@ pub struct Run {
     pub stopped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
+    /// Owned by the Terax board rather than an orchestrator pane.
+    #[serde(default)]
+    pub board: bool,
     #[serde(default)]
     pub tasks: Vec<TaskInfo>,
 }
@@ -311,6 +314,7 @@ mod tests {
             created_at_ms,
             stopped: false,
             check: None,
+            board: false,
             tasks,
         }
     }

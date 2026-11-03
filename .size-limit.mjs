@@ -16,7 +16,7 @@ export default [
   {
     name: "total client JS",
     path: ["dist/assets/*.js"],
-    limit: "1505 KB",
+    limit: "1510 KB",
     gzip: true,
   },
   {

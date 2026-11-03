@@ -52,6 +52,14 @@ describe("parseTaskOpen options", () => {
     expect(() => parseTaskOpen({ ...base, model: "--x" })).toThrow();
     expect(() => parseTaskOpen({ ...base, model: "a b" })).toThrow();
   });
+
+  it("carries the board run and rejects malformed ones", () => {
+    expect(parseTaskOpen({ ...base, board: "a1b2c3d4" }).board).toBe(
+      "a1b2c3d4",
+    );
+    expect(() => parseTaskOpen({ ...base, board: "../x" })).toThrow();
+    expect(() => parseTaskOpen({ ...base, board: 3 })).toThrow();
+  });
 });
 
 describe("parseTaskSend", () => {
@@ -140,7 +148,9 @@ describe("workerLaunchCommand", () => {
         "codex",
         false,
       ),
-    ).toMatch(/^codex --full-auto --model 'o3' '/);
+    ).toMatch(
+      /^codex --sandbox workspace-write --ask-for-approval on-request --model 'o3' '/,
+    );
     expect(
       workerLaunchCommand({ ...request, agent: "pi", model: "x" }, "pi", false),
     ).not.toContain("x'");

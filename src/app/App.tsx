@@ -207,6 +207,8 @@ export default function App() {
     splitActivePane,
     closeActivePane,
     closePaneByLeaf,
+    newBoardTab,
+    addBoardLeaf,
     resetWorkspace,
   } = useTabs(getLaunchDir() ? { cwd: getLaunchDir() } : undefined);
 
@@ -1592,6 +1594,11 @@ export default function App() {
     newAgentGroupTab,
     newTabInSpace,
     closeTab,
+    newBoardTab,
+    addBoardLeaf,
+    closePaneByLeaf,
+    setActiveId,
+    activeSpaceIdRef,
   });
   useControlBridge({
     ready: spacesHydrated && launchCwdResolved,
@@ -1653,6 +1660,9 @@ export default function App() {
               onLaunchAgents={launchAgentGroup}
               onNewOrchestrator={() =>
                 void orchestraTabs.openOrchestrator(inheritedCwdForNewTab())
+              }
+              onNewTaskBoard={() =>
+                void orchestraTabs.openBoard(inheritedCwdForNewTab())
               }
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}

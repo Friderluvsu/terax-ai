@@ -83,9 +83,12 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
     case "finished": {
       store.setStatus(leafId, "waiting");
       const session = store.sessions[leafId];
-      // Orchestra workers report to their orchestrator through `task wait`.
+      // Orchestra workers report through `task wait` or their board tile.
       const worker = ctx.tabs.some(
-        (t) => t.id === session?.tabId && t.spaceId === ORCHESTRA_SPACE_ID,
+        (t) =>
+          t.id === session?.tabId &&
+          (t.spaceId === ORCHESTRA_SPACE_ID ||
+            (t.kind === "terminal" && t.board !== undefined)),
       );
       if (session && !worker) route(session, "finished", ctx);
       maybeTriggerManagedReview(leafId);

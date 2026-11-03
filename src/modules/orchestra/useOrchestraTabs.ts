@@ -8,8 +8,17 @@ import {
 } from "@/modules/agents";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { useSpaces } from "@/modules/spaces";
-import type { Tab } from "@/modules/tabs/lib/useTabs";
-import { hasLeaf, whenSessionReady, writeToSession } from "@/modules/terminal";
+import {
+  MAX_BOARD_LEAVES,
+  type Tab,
+  type TerminalTab,
+} from "@/modules/tabs/lib/useTabs";
+import {
+  hasLeaf,
+  leafIds,
+  whenSessionReady,
+  writeToSession,
+} from "@/modules/terminal";
 import {
   ORCHESTRA_SPACE_ID,
   ORCHESTRA_SPACE_NAME,
@@ -30,6 +39,11 @@ type Options = {
   ) => { tabId: number; leafIds: number[] };
   newTabInSpace: (spaceId: string, cwd?: string) => number;
   closeTab: (id: number) => void;
+  newBoardTab: (board: { run: string; repo: string }) => number;
+  addBoardLeaf: (tabId: number, cwd: string) => number;
+  closePaneByLeaf: (leafId: number) => void;
+  setActiveId: (id: number) => void;
+  activeSpaceIdRef: RefObject<string | null>;
 };
 
 const SUBMIT_DELAY_MS = 150;
@@ -49,12 +63,50 @@ function ensureOrchestraSpace(): string {
   return ORCHESTRA_SPACE_ID;
 }
 
+function boardTab(tabs: Tab[], run: string): TerminalTab | undefined {
+  return tabs.find(
+    (tab): tab is TerminalTab =>
+      tab.kind === "terminal" && tab.board?.run === run,
+  );
+}
+
 export function useOrchestraTabs({
   tabsRef,
   newAgentGroupTab,
   newTabInSpace,
   closeTab,
+  newBoardTab,
+  addBoardLeaf,
+  closePaneByLeaf,
+  setActiveId,
+  activeSpaceIdRef,
 }: Options) {
+  // A closed or full board falls back to the Orchestra space.
+  const placeOnBoard = useCallback(
+    (request: TaskOpenRequest) => {
+      if (!request.board) return null;
+      const tab = boardTab(tabsRef.current ?? [], request.board);
+      if (!tab || tab.cold) return null;
+      if (leafIds(tab.paneTree).length >= MAX_BOARD_LEAVES) return null;
+      const leafId = addBoardLeaf(tab.id, request.cwd);
+      return { tabId: tab.id, leafId, spaceId: tab.spaceId };
+    },
+    [tabsRef, addBoardLeaf],
+  );
+
+  const openInOrchestraSpace = useCallback(
+    (request: TaskOpenRequest, label: string) => {
+      const spaceId = ensureOrchestraSpace();
+      const title = request.title ?? `${label} ${request.task}`;
+      const { tabId, leafIds } = newAgentGroupTab(request.cwd, title, 1, {
+        spaceId,
+        activate: false,
+      });
+      return { tabId, leafId: leafIds[0], spaceId };
+    },
+    [newAgentGroupTab],
+  );
+
   const openTask = useCallback(
     (request: TaskOpenRequest): TaskOpened => {
       const launcher = findAgentLauncher(request.agent);
@@ -64,13 +116,9 @@ export function useOrchestraTabs({
       if (!command.ok) {
         throw new TaskRequestError("invalid_command", command.error);
       }
-      const spaceId = ensureOrchestraSpace();
-      const title = request.title ?? `${launcher.label} ${request.task}`;
-      const { tabId, leafIds } = newAgentGroupTab(request.cwd, title, 1, {
-        spaceId,
-        activate: false,
-      });
-      const leafId = leafIds[0];
+      const placed = placeOnBoard(request);
+      const { tabId, leafId, spaceId } =
+        placed ?? openInOrchestraSpace(request, launcher.label);
       const hooksReady = launcher.supportsHooks
         ? invoke("agent_enable_hooks", { agent: request.agent }).catch(
             (error) => {
@@ -92,7 +140,7 @@ export function useOrchestraTabs({
       })();
       return { tab_id: tabId, pane_id: leafId, space_id: spaceId };
     },
-    [newAgentGroupTab],
+    [placeOnBoard, openInOrchestraSpace],
   );
 
   // A space always keeps one tab, so a cold placeholder replaces the last
@@ -104,13 +152,17 @@ export function useOrchestraTabs({
         (entry) => entry.kind === "terminal" && hasLeaf(entry.paneTree, paneId),
       );
       if (!tab) return false;
+      if (tab.kind === "terminal" && tab.board) {
+        closePaneByLeaf(paneId);
+        return true;
+      }
       if (!tabs.some((t) => t.spaceId === tab.spaceId && t.id !== tab.id)) {
         newTabInSpace(tab.spaceId);
       }
       closeTab(tab.id);
       return true;
     },
-    [tabsRef, newTabInSpace, closeTab],
+    [tabsRef, newTabInSpace, closeTab, closePaneByLeaf],
   );
 
   // TUIs treat a single burst ending in CR as a paste, so Enter goes separately.
@@ -153,5 +205,28 @@ export function useOrchestraTabs({
     [newAgentGroupTab],
   );
 
-  return { openTask, closeTask, sendTask, openOrchestrator };
+  const openBoard = useCallback(
+    async (cwd: string | undefined) => {
+      if (!cwd) {
+        toast.error("Open a folder inside a git repository first.");
+        return;
+      }
+      let board: { run: string; repo: string };
+      try {
+        board = await invoke("orchestra_board_open", { cwd });
+      } catch (error) {
+        toast.error(`Could not open the task board: ${String(error)}`);
+        return;
+      }
+      const existing = boardTab(tabsRef.current ?? [], board.run);
+      if (existing && existing.spaceId === activeSpaceIdRef.current) {
+        setActiveId(existing.id);
+        return;
+      }
+      newBoardTab({ run: board.run, repo: board.repo });
+    },
+    [tabsRef, activeSpaceIdRef, setActiveId, newBoardTab],
+  );
+
+  return { openTask, closeTask, sendTask, openOrchestrator, openBoard };
 }

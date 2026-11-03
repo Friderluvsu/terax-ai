@@ -12,6 +12,8 @@ export type TaskOpenRequest = {
   briefPath: string;
   model?: string;
   settingsPath?: string;
+  /** Board run that shows this worker as a tile. */
+  board?: string;
 };
 
 export type TaskSendRequest = { paneId: number; text: string };
@@ -88,6 +90,12 @@ export function parseTaskOpen(params: unknown): TaskOpenRequest {
     settingsPath: optional(value.settings_path, (path) =>
       requireText(path, "settings_path", 4096),
     ),
+    board: optional(value.board, (run) => {
+      if (typeof run !== "string" || !TASK_ID.test(run)) {
+        invalid("board run is malformed");
+      }
+      return run;
+    }),
   };
 }
 
@@ -186,7 +194,15 @@ export function workerLaunchCommand(
       quoteShellArg(parentDir(request.briefPath), windows),
     );
   }
-  if (request.agent === "codex") parts.push("--full-auto");
+  // Spelled out because Codex 0.163 removed the --full-auto shorthand.
+  if (request.agent === "codex") {
+    parts.push(
+      "--sandbox",
+      "workspace-write",
+      "--ask-for-approval",
+      "on-request",
+    );
+  }
   const modelFlag = MODEL_FLAG[request.agent];
   if (modelFlag && request.model) {
     parts.push(modelFlag, quoteShellArg(request.model, windows));

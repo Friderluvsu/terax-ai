@@ -264,6 +264,9 @@ pub struct TaskOpenParams {
     /// Claude Code settings that sandbox the worker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_path: Option<String>,
+    /// The board run that owns the task; its terminal goes on that board.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
