@@ -180,6 +180,8 @@ export function workerLaunchCommand(
   }
   const flag = PROMPT_FLAG[request.agent];
   if (flag) parts.push(flag);
+  // Claude's --add-dir is variadic and would swallow the prompt as a directory.
+  if (request.agent === "claude") parts.push("--");
   parts.push(quoteShellArg(workerPrompt(request), windows));
   return parts.join(" ");
 }

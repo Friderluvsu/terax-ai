@@ -96,13 +96,23 @@ describe("workerLaunchCommand", () => {
     const command = workerLaunchCommand(request, "claude", false);
     expect(
       command.startsWith(
-        "claude --permission-mode acceptEdits --add-dir '/tmp/it'\\''s here' '",
+        "claude --permission-mode acceptEdits --add-dir '/tmp/it'\\''s here' -- '",
       ),
     ).toBe(true);
     expect(command).toContain("/tmp/it'\\''s here/result.md");
     expect(command).toContain("/tmp/it'\\''s here/brief.md");
     expect(command).toContain("branch task/a1b2c3d4-1");
     expect(command).not.toContain("\n");
+  });
+
+  it("ends Claude's variadic --add-dir before the prompt", () => {
+    const claude = workerLaunchCommand(request, "claude", false);
+    expect(claude.indexOf(" -- '")).toBeGreaterThan(
+      claude.indexOf("--add-dir"),
+    );
+    expect(
+      workerLaunchCommand({ ...request, agent: "codex" }, "codex", false),
+    ).not.toContain(" -- ");
   });
 
   it("grants directory access only to Claude", () => {
@@ -125,7 +135,7 @@ describe("workerLaunchCommand", () => {
       false,
     );
     expect(claude).toMatch(
-      /^claude --settings '\/d\/s\.json' --permission-mode acceptEdits --add-dir .* --model 'opus' '/,
+      /^claude --settings '\/d\/s\.json' --permission-mode acceptEdits --add-dir .* --model 'opus' -- '/,
     );
     expect(
       workerLaunchCommand(
