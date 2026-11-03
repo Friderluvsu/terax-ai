@@ -11,6 +11,9 @@ pub const METHOD_ORCHESTRATE: &str = "orchestrate";
 pub const METHOD_TASK_CREATE: &str = "task.create";
 pub const METHOD_TASK_LIST: &str = "task.list";
 pub const METHOD_TASK_STOP: &str = "task.stop";
+pub const METHOD_TASK_WAIT: &str = "task.wait";
+pub const METHOD_TASK_RESULT: &str = "task.result";
+pub const METHOD_TASK_SEND: &str = "task.send";
 pub const METHOD_RUN_STOP: &str = "run.stop";
 pub const SERVER_RESPONSE_ID: &str = "server";
 pub const METHODS: &[&str] = &[
@@ -22,12 +25,19 @@ pub const METHODS: &[&str] = &[
     METHOD_TASK_CREATE,
     METHOD_TASK_LIST,
     METHOD_TASK_STOP,
+    METHOD_TASK_WAIT,
+    METHOD_TASK_RESULT,
+    METHOD_TASK_SEND,
     METHOD_RUN_STOP,
 ];
 pub const MAX_BRIEF_BYTES: usize = 16 * 1024;
 const _: () = assert!(MAX_BRIEF_BYTES * 2 < MAX_MESSAGE_BYTES);
 pub const MAX_TASK_TITLE_CHARS: usize = 120;
 pub const TASK_AGENTS: &[&str] = &["claude", "codex", "gemini", "pi", "opencode", "grok"];
+pub const MAX_CHECK_COMMAND_CHARS: usize = 1024;
+pub const MAX_SEND_TEXT_BYTES: usize = 4 * 1024;
+pub const DEFAULT_WAIT_SECS: u64 = 600;
+pub const MAX_WAIT_SECS: u64 = 3600;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct CallerContext {
@@ -143,6 +153,9 @@ fn default_focus() -> bool {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct OrchestrateParams {
     pub cwd: String,
+    /// Shell command run in a task's worktree after its agent finishes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -151,6 +164,22 @@ pub struct TaskCreateParams {
     pub brief: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskWaitParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskSendParams {
+    pub task: String,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -170,19 +199,31 @@ pub enum TaskStatus {
     Queued,
     Starting,
     Running,
+    /// The agent asked a question or a permission.
+    NeedsInput,
+    /// The agent finished its turn; its tab stays open for follow-ups.
+    Done,
     Stopped,
     Failed,
     Interrupted,
 }
 
 impl TaskStatus {
-    pub fn holds_worker_slot(self) -> bool {
-        matches!(self, Self::Starting | Self::Running)
+    pub fn is_working(self) -> bool {
+        matches!(self, Self::Starting | Self::Running | Self::NeedsInput)
     }
 
     pub fn is_active(self) -> bool {
-        matches!(self, Self::Queued | Self::Starting | Self::Running)
+        self.is_working() || matches!(self, Self::Queued | Self::Done)
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStatus {
+    Running,
+    Passed,
+    Failed,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -200,6 +241,13 @@ pub struct TaskInfo {
     pub pane_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<CheckStatus>,
+    /// Settled but not yet returned by `task.wait`.
+    #[serde(default)]
+    pub unreported: bool,
 }
 
 /// Sent to the UI when a task leaves the queue: it opens one worker tab.
@@ -211,11 +259,55 @@ pub struct TaskOpenParams {
     pub title: Option<String>,
     pub cwd: String,
     pub brief_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Claude Code settings that sandbox the worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TaskCloseParams {
     pub pane_id: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PaneSendParams {
+    pub pane_id: u32,
+    pub text: String,
+}
+
+pub fn validate_model(model: &str) -> Result<(), String> {
+    let ok = !model.is_empty()
+        && model.len() <= 64
+        && model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:/-[]".contains(&b))
+        && !model.starts_with('-');
+    ok.then_some(())
+        .ok_or_else(|| "model must be 1-64 characters of [A-Za-z0-9._:/-[]]".to_string())
+}
+
+pub fn validate_check_command(command: &str) -> Result<(), String> {
+    if command.trim().is_empty() || command.chars().count() > MAX_CHECK_COMMAND_CHARS {
+        return Err(format!(
+            "check command must contain 1-{MAX_CHECK_COMMAND_CHARS} characters"
+        ));
+    }
+    if command.chars().any(char::is_control) {
+        return Err("check command must be a single line".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_send_text(text: &str) -> Result<(), String> {
+    if text.trim().is_empty() || text.len() > MAX_SEND_TEXT_BYTES {
+        return Err(format!("text must contain 1-{MAX_SEND_TEXT_BYTES} bytes"));
+    }
+    if text.chars().any(char::is_control) {
+        return Err("text must be a single line".to_string());
+    }
+    Ok(())
 }
 
 // Only tab and line breaks are allowed, which bounds JSON escaping at 2x and
@@ -250,6 +342,7 @@ pub fn validate_title(title: &str) -> Result<(), String> {
 
 pub const FRONTEND_TASK_OPEN: &str = "task.open";
 pub const FRONTEND_TASK_CLOSE: &str = "task.close";
+pub const FRONTEND_TASK_SEND: &str = "task.send";
 
 #[cfg(test)]
 mod tests {
@@ -309,6 +402,9 @@ mod tests {
                 "task.create",
                 "task.list",
                 "task.stop",
+                "task.wait",
+                "task.result",
+                "task.send",
                 "run.stop",
             ]
         );
@@ -320,11 +416,29 @@ mod tests {
             serde_json::to_value(TaskStatus::Interrupted).unwrap(),
             json!("interrupted")
         );
-        assert!(TaskStatus::Starting.holds_worker_slot());
-        assert!(TaskStatus::Running.holds_worker_slot());
-        assert!(!TaskStatus::Queued.holds_worker_slot());
-        assert!(TaskStatus::Queued.is_active());
+        assert_eq!(
+            serde_json::to_value(TaskStatus::NeedsInput).unwrap(),
+            json!("needs_input")
+        );
+        assert!(TaskStatus::NeedsInput.is_working());
+        assert!(!TaskStatus::Done.is_working());
+        assert!(!TaskStatus::Queued.is_working());
+        assert!(TaskStatus::Done.is_active());
         assert!(!TaskStatus::Stopped.is_active());
+    }
+
+    #[test]
+    fn model_check_and_send_validation_rejects_shell_tricks() {
+        assert!(validate_model("sonnet").is_ok());
+        assert!(validate_model("claude-sonnet-4-5[1m]").is_ok());
+        for bad in ["", "--dangerous", "a b", "x;rm", "$(id)", &"m".repeat(65)] {
+            assert!(validate_model(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_check_command("pnpm lint && pnpm test").is_ok());
+        assert!(validate_check_command("a\nb").is_err());
+        assert!(validate_send_text("also add tests").is_ok());
+        assert!(validate_send_text("x\r").is_err());
+        assert!(validate_send_text(&"x".repeat(MAX_SEND_TEXT_BYTES + 1)).is_err());
     }
 
     #[test]

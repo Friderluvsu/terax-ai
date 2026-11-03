@@ -2,26 +2,30 @@
 //! their own git worktrees. Roles are bound to pane credentials in Rust, so a
 //! worker can never start other workers.
 
+pub mod checks;
 pub mod run;
+pub mod skill;
 pub mod worktree;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terax_control_protocol::{
-    validate_brief, validate_title, TaskCreateParams, TaskInfo, TaskOpenParams, TaskStatus,
-    TASK_AGENTS,
+    validate_brief, validate_check_command, validate_model, validate_send_text, validate_title,
+    CheckStatus, TaskCreateParams, TaskInfo, TaskOpenParams, TaskStatus, TASK_AGENTS,
 };
 
-use run::Run;
+use checks::CheckJob;
+use run::{Admission, Promotion, Run};
 
 pub type OrchestraError = (&'static str, String);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Caller {
-    /// Authenticated with the descriptor token: a human-run CLI outside Terax.
+    /// Authenticated with the descriptor token or acting from the Terax UI:
+    /// the human, with no pane.
     External,
     Pane(u32),
 }
@@ -33,9 +37,13 @@ enum Role {
     Worker,
 }
 
+type Listener = Box<dyn Fn() + Send + Sync>;
+
 #[derive(Default)]
 pub struct Orchestra {
     inner: Mutex<Inner>,
+    changed: Condvar,
+    listener: OnceLock<Listener>,
 }
 
 #[derive(Default)]
@@ -50,12 +58,27 @@ struct Inner {
 pub struct Created {
     pub task: TaskInfo,
     pub start: bool,
+    pub evicted: Option<u32>,
 }
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Stopped {
     pub tasks: Vec<String>,
     pub panes: Vec<u32>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TaskResult {
+    pub task: TaskInfo,
+    pub result: Option<String>,
+    pub check_log: Option<String>,
+}
+
+#[derive(Default)]
+pub struct SignalEffect {
+    pub check: Option<CheckJob>,
+    /// A slot may have freed up for the queue.
+    pub promote: bool,
 }
 
 impl Orchestra {
@@ -78,8 +101,35 @@ impl Orchestra {
         Ok(())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+    /// Called after every state change, outside the state lock.
+    pub fn set_listener(&self, listener: impl Fn() + Send + Sync + 'static) {
+        let _ = self.listener.set(Box::new(listener));
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().expect("orchestra state poisoned")
+    }
+
+    /// Persists the given runs while still holding the lock, so snapshots reach
+    /// disk in order, then wakes waiters and the UI.
+    fn commit(&self, inner: MutexGuard<'_, Inner>, run_ids: &[&str]) -> Result<(), OrchestraError> {
+        let mut result = Ok(());
+        if let Some(root) = &inner.root {
+            for id in run_ids {
+                if let Some(run) = inner.runs.get(*id) {
+                    if let Err(error) = persist(root, run) {
+                        log::warn!("could not persist run {id}: {}", error.1);
+                        result = Err(error);
+                    }
+                }
+            }
+        }
+        drop(inner);
+        self.changed.notify_all();
+        if let Some(listener) = self.listener.get() {
+            listener();
+        }
+        result
     }
 
     /// Called when a pane's shell spawns. A shell started inside the orchestra
@@ -135,18 +185,33 @@ impl Orchestra {
     }
 
     /// Marks the calling pane as the orchestrator of a run rooted at the git
-    /// repository containing `cwd`. Calling it again returns the same run.
-    pub fn orchestrate(&self, caller: Caller, cwd: &Path) -> Result<Run, OrchestraError> {
+    /// repository containing `cwd`. Calling it again returns the same run and
+    /// updates its check command when one is given.
+    pub fn orchestrate(
+        &self,
+        caller: Caller,
+        cwd: &Path,
+        check: Option<String>,
+    ) -> Result<Run, OrchestraError> {
         let Caller::Pane(pane_id) = caller else {
             return Err(forbidden("orchestrate must be run from a Terax pane"));
         };
+        if let Some(check) = &check {
+            validate_check_command(check).map_err(|error| ("invalid_params", error))?;
+        }
         let root = {
-            let inner = self.lock();
+            let mut inner = self.lock();
             match Self::role(&inner, pane_id) {
                 Role::Worker => return Err(forbidden("worker panes cannot orchestrate")),
-                Role::Orchestrator(run) => {
-                    if let Some(run) = inner.runs.get(&run).filter(|run| !run.stopped) {
-                        return Ok(run.clone());
+                Role::Orchestrator(id) => {
+                    if inner.runs.get(&id).is_some_and(|run| !run.stopped) {
+                        let run = inner.runs.get_mut(&id).expect("run checked above");
+                        if check.is_some() {
+                            run.check = check;
+                        }
+                        let run = run.clone();
+                        self.commit(inner, &[&id])?;
+                        return Ok(run);
                     }
                 }
                 Role::Plain => {}
@@ -174,12 +239,29 @@ impl Orchestra {
             base,
             created_at_ms: now_ms(),
             stopped: false,
+            check,
             tasks: Vec::new(),
         };
-        persist(&root, &run)?;
         inner.runs.insert(id.clone(), run.clone());
-        inner.orchestrators.insert(pane_id, id);
+        inner.orchestrators.insert(pane_id, id.clone());
+        self.commit(inner, &[&id])?;
         Ok(run)
+    }
+
+    fn require_orchestrator(inner: &Inner, caller: Caller) -> Result<String, OrchestraError> {
+        match caller {
+            Caller::External => Err(forbidden(
+                "tasks can only be created from an orchestrator pane",
+            )),
+            Caller::Pane(pane_id) => match Self::role(inner, pane_id) {
+                Role::Worker => Err(forbidden("worker panes cannot create tasks")),
+                Role::Plain => Err((
+                    "not_orchestrator",
+                    "run `terax orchestrate` in this pane first".to_string(),
+                )),
+                Role::Orchestrator(run) => Ok(run),
+            },
+        }
     }
 
     pub fn create_task(
@@ -188,23 +270,7 @@ impl Orchestra {
         params: TaskCreateParams,
     ) -> Result<Created, OrchestraError> {
         let mut inner = self.lock();
-        let run_id = match caller {
-            Caller::External => {
-                return Err(forbidden(
-                    "tasks can only be created from an orchestrator pane",
-                ))
-            }
-            Caller::Pane(pane_id) => match Self::role(&inner, pane_id) {
-                Role::Worker => return Err(forbidden("worker panes cannot create tasks")),
-                Role::Plain => {
-                    return Err((
-                        "not_orchestrator",
-                        "run `terax orchestrate` in this pane first".to_string(),
-                    ))
-                }
-                Role::Orchestrator(run) => run,
-            },
-        };
+        let run_id = Self::require_orchestrator(&inner, caller)?;
         if !TASK_AGENTS.contains(&params.agent.as_str()) {
             return Err((
                 "invalid_params",
@@ -215,8 +281,11 @@ impl Orchestra {
         if let Some(title) = &params.title {
             validate_title(title).map_err(|error| ("invalid_params", error))?;
         }
+        if let Some(model) = &params.model {
+            validate_model(model).map_err(|error| ("invalid_params", error))?;
+        }
         let root = inner.root.clone().ok_or_else(unavailable)?;
-        let status = run::admit(inner.runs.values());
+        let admission = run::admit(inner.runs.values());
         let run = inner
             .runs
             .get_mut(&run_id)
@@ -227,9 +296,18 @@ impl Orchestra {
         std::fs::create_dir_all(&paths.dir)
             .and_then(|_| std::fs::write(&paths.brief, params.brief.as_bytes()))
             .map_err(|error| ("io_error", format!("write brief: {error}")))?;
+        if params.agent == "claude" {
+            let settings = checks::claude_settings(&paths.dir);
+            std::fs::write(&paths.claude_settings, settings.to_string())
+                .map_err(|error| ("io_error", format!("write worker settings: {error}")))?;
+        }
+        let (status, evict) = match admission {
+            Admission::Start { evict } => (TaskStatus::Starting, evict),
+            Admission::Queue => (TaskStatus::Queued, None),
+        };
         let task = TaskInfo {
             id: id.clone(),
-            run: run_id,
+            run: run_id.clone(),
             agent: params.agent,
             title: params.title.map(|title| title.trim().to_string()),
             status,
@@ -238,14 +316,26 @@ impl Orchestra {
             brief_path: crate::modules::fs::to_canon(&paths.brief),
             pane_id: None,
             error: None,
+            model: params.model,
+            checks: None,
+            unreported: false,
         };
         run.tasks.push(task.clone());
-        let snapshot = run.clone();
-        drop(inner);
-        persist(&root, &snapshot)?;
+        let mut evicted = None;
+        let mut evicted_run = None;
+        if let Some(evict_id) = evict {
+            if let Ok(idle) = find_task_mut(&mut inner.runs, &evict_id) {
+                evicted = idle.pane_id.take();
+                evicted_run = Some(idle.run.clone());
+            }
+        }
+        let mut changed = vec![run_id.as_str()];
+        changed.extend(evicted_run.as_deref());
+        self.commit(inner, &changed)?;
         Ok(Created {
             start: status == TaskStatus::Starting,
             task,
+            evicted,
         })
     }
 
@@ -277,24 +367,27 @@ impl Orchestra {
                     Err(error) => {
                         current.status = TaskStatus::Failed;
                         current.error = Some(error.clone());
+                        current.unreported = true;
                     }
                 }
             }
             current.status == TaskStatus::Running
         };
-        let snapshot = inner.runs[&task.run].clone();
-        drop(inner);
-        persist(&root, &snapshot)?;
+        self.commit(inner, &[&task.run])?;
         result.map_err(|error| ("git_failed", error))?;
         if !still_running {
             return Err(("invalid_state", format!("task {task_id} was stopped")));
         }
+        let settings_path =
+            (task.agent == "claude").then(|| crate::modules::fs::to_canon(&paths.claude_settings));
         Ok(TaskOpenParams {
             task: task.id,
             agent: task.agent,
             title: task.title,
             cwd: task.worktree,
             brief_path: task.brief_path,
+            model: task.model,
+            settings_path,
         })
     }
 
@@ -308,44 +401,100 @@ impl Orchestra {
 
     pub fn fail_task(&self, task_id: &str, error: String) {
         self.update_task(task_id, |task| {
-            if task.status.is_active() {
+            if task.status.is_working() || task.status == TaskStatus::Queued {
                 task.status = TaskStatus::Failed;
                 task.error = Some(error);
+                task.unreported = true;
             }
         });
     }
 
     fn update_task(&self, task_id: &str, apply: impl FnOnce(&mut TaskInfo)) {
         let mut inner = self.lock();
-        let Some(root) = inner.root.clone() else {
-            return;
-        };
         let Ok(task) = find_task_mut(&mut inner.runs, task_id) else {
             return;
         };
         apply(task);
         let run_id = task.run.clone();
-        let snapshot = inner.runs[&run_id].clone();
-        drop(inner);
-        if let Err((_, error)) = persist(&root, &snapshot) {
-            log::warn!("could not persist run {run_id}: {error}");
+        let _ = self.commit(inner, &[&run_id]);
+    }
+
+    /// Routes an agent hook signal from a pane's PTY to the task it runs.
+    pub fn agent_signal(&self, pane_id: u32, kind: &str) -> SignalEffect {
+        let Some(signal) = run::parse_signal(kind) else {
+            return SignalEffect::default();
+        };
+        let mut inner = self.lock();
+        let Some(root) = inner.root.clone() else {
+            return SignalEffect::default();
+        };
+        let Some(run) = inner
+            .runs
+            .values_mut()
+            .find(|run| run.tasks.iter().any(|task| task.pane_id == Some(pane_id)))
+        else {
+            return SignalEffect::default();
+        };
+        let check = run.check.clone();
+        let run_id = run.id.clone();
+        let task = run
+            .tasks
+            .iter_mut()
+            .find(|task| task.pane_id == Some(pane_id))
+            .expect("task found above");
+        let before = (task.status, task.checks, task.unreported);
+        let start_check = run::apply_signal(task, signal, check.is_some());
+        if before == (task.status, task.checks, task.unreported) {
+            return SignalEffect::default();
         }
+        let promote = signal == run::Signal::Finished;
+        let job = match (start_check, check) {
+            (true, Some(command)) => {
+                worktree::task_paths(&root, &task.run, &task.id)
+                    .ok()
+                    .map(|paths| CheckJob {
+                        task: task.id.clone(),
+                        command,
+                        cwd: paths.worktree,
+                        target: paths.target,
+                        log: paths.check_log,
+                    })
+            }
+            _ => None,
+        };
+        let _ = self.commit(inner, &[&run_id]);
+        SignalEffect {
+            check: job,
+            promote,
+        }
+    }
+
+    pub fn finish_check(&self, task_id: &str, outcome: Result<bool, String>) {
+        self.update_task(task_id, |task| {
+            if task.checks != Some(CheckStatus::Running) {
+                return;
+            }
+            task.checks = Some(match outcome {
+                Ok(true) => CheckStatus::Passed,
+                Ok(false) => CheckStatus::Failed,
+                Err(error) => {
+                    task.error = Some(error);
+                    CheckStatus::Failed
+                }
+            });
+            task.unreported = true;
+        });
     }
 
     pub fn list(&self, caller: Caller) -> Result<Vec<TaskInfo>, OrchestraError> {
         let inner = self.lock();
-        let scope = self.scope(&inner, caller)?;
-        Ok(inner
-            .runs
-            .values()
-            .filter(|run| scope.as_ref().is_none_or(|id| &run.id == id))
-            .flat_map(|run| run.tasks.iter().cloned())
-            .collect())
+        let scope = Self::scope(&inner, caller)?;
+        Ok(in_scope(&inner.runs, &scope).cloned().collect())
     }
 
     /// `Some(run)` limits an orchestrator to its own run; `None` means the
     /// human sees everything. Workers are refused.
-    fn scope(&self, inner: &Inner, caller: Caller) -> Result<Option<String>, OrchestraError> {
+    fn scope(inner: &Inner, caller: Caller) -> Result<Option<String>, OrchestraError> {
         match caller {
             Caller::External => Ok(None),
             Caller::Pane(pane_id) => match Self::role(inner, pane_id) {
@@ -356,19 +505,132 @@ impl Orchestra {
         }
     }
 
+    /// Blocks until a task needs the orchestrator: it finished (after its
+    /// checks), asked a question, failed or stopped. Each event is reported
+    /// once. Returns immediately with nothing when no task is in flight.
+    pub fn wait(
+        &self,
+        caller: Caller,
+        task_id: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Vec<TaskInfo>, OrchestraError> {
+        let deadline = Instant::now() + timeout;
+        let mut inner = self.lock();
+        loop {
+            let scope = Self::scope(&inner, caller)?;
+            if let Some(task_id) = task_id {
+                let task = find_task_mut(&mut inner.runs, task_id)?;
+                if scope.as_ref().is_some_and(|run| run != &task.run) {
+                    return Err(forbidden("task belongs to another run"));
+                }
+                if run::is_settled(task) {
+                    task.unreported = false;
+                    let task = task.clone();
+                    let _ = self.commit(inner, &[&task.run]);
+                    return Ok(vec![task]);
+                }
+            } else {
+                let mut ready = Vec::new();
+                let mut in_flight = false;
+                for run in inner.runs.values_mut() {
+                    if scope.as_ref().is_some_and(|id| id != &run.id) {
+                        continue;
+                    }
+                    for task in &mut run.tasks {
+                        if task.unreported && run::is_settled(task) {
+                            task.unreported = false;
+                            ready.push(task.clone());
+                        } else if run::is_busy(task) || task.status == TaskStatus::Queued {
+                            in_flight = true;
+                        }
+                    }
+                }
+                if !ready.is_empty() {
+                    let runs: Vec<String> = ready.iter().map(|task| task.run.clone()).collect();
+                    let ids: Vec<&str> = runs.iter().map(String::as_str).collect();
+                    let _ = self.commit(inner, &ids);
+                    return Ok(ready);
+                }
+                if !in_flight {
+                    return Ok(Vec::new());
+                }
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(Vec::new());
+            }
+            inner = self
+                .changed
+                .wait_timeout(inner, deadline - now)
+                .expect("orchestra state poisoned")
+                .0;
+        }
+    }
+
+    pub fn result(&self, caller: Caller, task_id: &str) -> Result<TaskResult, OrchestraError> {
+        let (root, task) = {
+            let inner = self.lock();
+            let scope = Self::scope(&inner, caller)?;
+            let (_, task) = find_task(&inner.runs, task_id)?;
+            if scope.as_ref().is_some_and(|run| run != &task.run) {
+                return Err(forbidden("task belongs to another run"));
+            }
+            (inner.root.clone().ok_or_else(unavailable)?, task.clone())
+        };
+        let paths = worktree::task_paths(&root, &task.run, &task.id).map_err(internal)?;
+        Ok(TaskResult {
+            result: checks::read_tail(&paths.result, checks::RESULT_MAX_BYTES),
+            check_log: checks::read_tail(&paths.check_log, checks::LOG_TAIL_BYTES),
+            task,
+        })
+    }
+
+    /// Validates a follow-up for a worker and returns its pane.
+    pub fn send_target(
+        &self,
+        caller: Caller,
+        task_id: &str,
+        text: &str,
+    ) -> Result<u32, OrchestraError> {
+        validate_send_text(text).map_err(|error| ("invalid_params", error))?;
+        let mut inner = self.lock();
+        let run_id = match Self::require_orchestrator(&inner, caller) {
+            Ok(run) => Some(run),
+            Err(_) if caller == Caller::External => None,
+            Err(error) => return Err(error),
+        };
+        let task = find_task_mut(&mut inner.runs, task_id)?;
+        if run_id.as_ref().is_some_and(|run| run != &task.run) {
+            return Err(forbidden("task belongs to another run"));
+        }
+        let pane = match (task.status, task.pane_id) {
+            (TaskStatus::Running | TaskStatus::NeedsInput | TaskStatus::Done, Some(pane)) => pane,
+            _ => {
+                return Err((
+                    "invalid_state",
+                    format!("task {task_id} has no open worker; create a follow-up task"),
+                ))
+            }
+        };
+        task.status = TaskStatus::Running;
+        task.checks = None;
+        task.unreported = false;
+        let run = task.run.clone();
+        self.commit(inner, &[&run])?;
+        Ok(pane)
+    }
+
     pub fn stop_task(&self, caller: Caller, task_id: &str) -> Result<Stopped, OrchestraError> {
         let mut inner = self.lock();
-        let scope = self.scope(&inner, caller)?;
-        let root = inner.root.clone().ok_or_else(unavailable)?;
+        let scope = Self::scope(&inner, caller)?;
         let task = find_task_mut(&mut inner.runs, task_id)?;
         if scope.as_ref().is_some_and(|run| run != &task.run) {
             return Err(forbidden("task belongs to another run"));
         }
         let mut stopped = Stopped::default();
         stop_one(task, &mut stopped);
-        let snapshot = inner.runs[&task_run(task_id)].clone();
-        drop(inner);
-        persist(&root, &snapshot)?;
+        let run = task.run.clone();
+        self.commit(inner, &[&run])?;
         Ok(stopped)
     }
 
@@ -380,8 +642,7 @@ impl Orchestra {
         run_id: Option<&str>,
     ) -> Result<Stopped, OrchestraError> {
         let mut inner = self.lock();
-        let scope = self.scope(&inner, caller)?;
-        let root = inner.root.clone().ok_or_else(unavailable)?;
+        let scope = Self::scope(&inner, caller)?;
         let targets: Vec<String> = match (run_id, scope) {
             (Some(id), Some(own)) if id != own => {
                 return Err(forbidden("run belongs to another orchestrator"))
@@ -391,53 +652,56 @@ impl Orchestra {
             (None, None) => inner.runs.keys().cloned().collect(),
         };
         let mut stopped = Stopped::default();
-        let mut snapshots = Vec::new();
-        for id in targets {
+        for id in &targets {
             let run = inner
                 .runs
-                .get_mut(&id)
+                .get_mut(id)
                 .ok_or_else(|| ("not_found", format!("unknown run {id}")))?;
             run.stopped = true;
             for task in &mut run.tasks {
                 stop_one(task, &mut stopped);
             }
-            snapshots.push(run.clone());
         }
-        inner
-            .orchestrators
-            .retain(|_, run| !snapshots.iter().any(|stopped_run| &stopped_run.id == run));
-        drop(inner);
-        for snapshot in &snapshots {
-            persist(&root, snapshot)?;
-        }
+        inner.orchestrators.retain(|_, run| !targets.contains(run));
+        let ids: Vec<&str> = targets.iter().map(String::as_str).collect();
+        self.commit(inner, &ids)?;
         Ok(stopped)
     }
 
-    pub fn promote(&self) -> Vec<String> {
+    pub fn promote(&self) -> Promotion {
         let mut inner = self.lock();
-        let Some(root) = inner.root.clone() else {
-            return Vec::new();
-        };
-        let promoted = run::promote(&mut inner.runs);
-        let snapshots: Vec<Run> = promoted
-            .iter()
-            .filter_map(|id| inner.runs.get(&task_run(id)).cloned())
-            .collect();
-        drop(inner);
-        for snapshot in &snapshots {
-            if let Err((_, error)) = persist(&root, snapshot) {
-                log::warn!("could not persist run {}: {error}", snapshot.id);
-            }
+        let promotion = run::promote(&mut inner.runs);
+        if promotion.started.is_empty() {
+            return promotion;
         }
-        promoted
+        let runs: Vec<String> = inner.runs.keys().cloned().collect();
+        let ids: Vec<&str> = runs.iter().map(String::as_str).collect();
+        let _ = self.commit(inner, &ids);
+        promotion
     }
 }
 
+fn in_scope<'a>(
+    runs: &'a BTreeMap<String, Run>,
+    scope: &'a Option<String>,
+) -> impl Iterator<Item = &'a TaskInfo> {
+    runs.values()
+        .filter(move |run| scope.as_ref().is_none_or(|id| &run.id == id))
+        .flat_map(|run| run.tasks.iter())
+}
+
+/// Working tasks stop; a finished task keeps its result and only loses its tab.
 fn stop_one(task: &mut TaskInfo, stopped: &mut Stopped) {
     if !task.status.is_active() {
         return;
     }
-    task.status = TaskStatus::Stopped;
+    if task.status != TaskStatus::Done {
+        task.status = TaskStatus::Stopped;
+        task.unreported = false;
+    }
+    if task.checks == Some(CheckStatus::Running) {
+        task.checks = None;
+    }
     stopped.tasks.push(task.id.clone());
     if let Some(pane) = task.pane_id.take() {
         stopped.panes.push(pane);
@@ -504,9 +768,10 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use std::process::Command;
+    use std::sync::Arc;
 
     struct Fixture {
-        orchestra: Orchestra,
+        orchestra: Arc<Orchestra>,
         repo: tempfile::TempDir,
         _data: tempfile::TempDir,
         root: PathBuf,
@@ -528,7 +793,7 @@ mod tests {
                 .success());
         }
         let data = tempfile::tempdir().unwrap();
-        let orchestra = Orchestra::default();
+        let orchestra = Arc::new(Orchestra::default());
         orchestra.init(data.path().join("orchestra")).unwrap();
         let root = std::fs::canonicalize(data.path().join("orchestra")).unwrap();
         Fixture {
@@ -544,6 +809,36 @@ mod tests {
             agent: "claude".into(),
             brief: brief.into(),
             title: None,
+            model: None,
+        }
+    }
+
+    impl Fixture {
+        fn orchestrate(&self, pane: u32) -> Run {
+            self.orchestra
+                .orchestrate(Caller::Pane(pane), self.repo.path(), None)
+                .unwrap()
+        }
+
+        /// Creates a task and opens its worker the way the control server does.
+        fn start(&self, pane: u32, worker_pane: u32) -> TaskInfo {
+            let created = self
+                .orchestra
+                .create_task(Caller::Pane(pane), params("do it"))
+                .unwrap();
+            assert!(created.start);
+            self.orchestra.prepare_worktree(&created.task.id).unwrap();
+            self.orchestra.attach_pane(&created.task.id, worker_pane);
+            self.task(&created.task.id)
+        }
+
+        fn task(&self, id: &str) -> TaskInfo {
+            self.orchestra
+                .list(Caller::External)
+                .unwrap()
+                .into_iter()
+                .find(|t| t.id == id)
+                .unwrap()
         }
     }
 
@@ -562,7 +857,7 @@ mod tests {
         assert_eq!(err.0, "forbidden");
         assert_eq!(
             f.orchestra
-                .orchestrate(Caller::External, f.repo.path())
+                .orchestrate(Caller::External, f.repo.path(), None)
                 .unwrap_err()
                 .0,
             "forbidden"
@@ -572,20 +867,12 @@ mod tests {
     #[test]
     fn a_worker_pane_cannot_create_tasks_or_become_orchestrator() {
         let f = fixture();
-        let run = f
+        let run = f.orchestrate(1);
+        let task = f.start(1, 2);
+        let env = f
             .orchestra
-            .orchestrate(Caller::Pane(1), f.repo.path())
-            .unwrap();
-        let created = f
-            .orchestra
-            .create_task(Caller::Pane(1), params("do it"))
-            .unwrap();
-        assert!(created.start);
-        let open = f.orchestra.prepare_worktree(&created.task.id).unwrap();
-        assert!(Path::new(&open.cwd).join(".git").exists());
-
-        let env = f.orchestra.register_pane(2, Some(Path::new(&open.cwd)));
-        assert!(env.contains(&("TERAX_TASK_ID".into(), created.task.id.clone())));
+            .register_pane(2, Some(Path::new(&task.worktree)));
+        assert!(env.contains(&("TERAX_TASK_ID".into(), task.id.clone())));
         let target = env
             .iter()
             .find(|(key, _)| key == "CARGO_TARGET_DIR")
@@ -598,29 +885,30 @@ mod tests {
             .create_task(Caller::Pane(2), params("x"))
             .unwrap_err();
         assert_eq!(err, forbidden("worker panes cannot create tasks"));
-        let err = f
-            .orchestra
-            .orchestrate(Caller::Pane(2), f.repo.path())
-            .unwrap_err();
-        assert_eq!(err.0, "forbidden");
-        assert_eq!(
-            f.orchestra.list(Caller::Pane(2)).unwrap_err().0,
-            "forbidden"
-        );
-        assert_eq!(
+        for err in [
             f.orchestra
-                .stop_task(Caller::Pane(2), &created.task.id)
-                .unwrap_err()
-                .0,
-            "forbidden"
-        );
+                .orchestrate(Caller::Pane(2), f.repo.path(), None)
+                .unwrap_err(),
+            f.orchestra.list(Caller::Pane(2)).unwrap_err(),
+            f.orchestra
+                .stop_task(Caller::Pane(2), &task.id)
+                .unwrap_err(),
+            f.orchestra
+                .wait(Caller::Pane(2), None, Duration::ZERO)
+                .unwrap_err(),
+            f.orchestra
+                .send_target(Caller::Pane(2), &task.id, "hi")
+                .unwrap_err(),
+        ] {
+            assert_eq!(err.0, "forbidden");
+        }
 
-        let nested = Path::new(&open.cwd).join("sub");
+        let nested = Path::new(&task.worktree).join("sub");
         std::fs::create_dir(&nested).unwrap();
         f.orchestra.register_pane(3, Some(&nested));
         assert_eq!(
             f.orchestra
-                .orchestrate(Caller::Pane(3), &nested)
+                .orchestrate(Caller::Pane(3), &nested, None)
                 .unwrap_err()
                 .0,
             "forbidden"
@@ -628,17 +916,28 @@ mod tests {
     }
 
     #[test]
-    fn an_orchestrator_respawned_inside_a_worktree_loses_its_role() {
+    fn claude_workers_get_sandbox_settings_inside_their_task_dir() {
         let f = fixture();
-        f.orchestra
-            .orchestrate(Caller::Pane(1), f.repo.path())
-            .unwrap();
+        let run = f.orchestrate(1);
         let created = f
             .orchestra
             .create_task(Caller::Pane(1), params("x"))
             .unwrap();
         let open = f.orchestra.prepare_worktree(&created.task.id).unwrap();
-        f.orchestra.register_pane(1, Some(Path::new(&open.cwd)));
+        let settings = PathBuf::from(open.settings_path.unwrap());
+        assert!(settings.starts_with(f.root.join(&run.id)));
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(settings).unwrap()).unwrap();
+        assert_eq!(value["sandbox"]["enabled"], true);
+    }
+
+    #[test]
+    fn an_orchestrator_respawned_inside_a_worktree_loses_its_role() {
+        let f = fixture();
+        f.orchestrate(1);
+        let task = f.start(1, 5);
+        f.orchestra
+            .register_pane(1, Some(Path::new(&task.worktree)));
         let err = f
             .orchestra
             .create_task(Caller::Pane(1), params("x"))
@@ -647,34 +946,127 @@ mod tests {
     }
 
     #[test]
-    fn the_worker_cap_holds_and_stopping_promotes_the_queue() {
+    fn finishing_frees_the_slot_and_evicts_the_oldest_idle_tab() {
+        let f = fixture();
+        f.orchestrate(1);
+        let workers: Vec<TaskInfo> = (0..4).map(|n| f.start(1, 10 + n)).collect();
+        let queued = f
+            .orchestra
+            .create_task(Caller::Pane(1), params("fifth"))
+            .unwrap();
+        assert!(!queued.start);
+
+        let effect = f.orchestra.agent_signal(10, "finished");
+        assert!(effect.promote && effect.check.is_none());
+        assert_eq!(f.task(&workers[0].id).status, TaskStatus::Done);
+        let promotion = f.orchestra.promote();
+        assert_eq!(promotion.started, vec![queued.task.id.clone()]);
+        assert_eq!(promotion.evicted, vec![10]);
+        assert_eq!(f.task(&workers[0].id).pane_id, None);
+        assert!(
+            Path::new(&workers[0].worktree).join(".git").exists(),
+            "eviction keeps the worktree"
+        );
+    }
+
+    #[test]
+    fn wait_reports_each_settled_task_once_and_returns_when_idle() {
+        let f = fixture();
+        f.orchestrate(1);
+        let task = f.start(1, 7);
+        let orchestra = f.orchestra.clone();
+        let waiter = std::thread::spawn(move || {
+            orchestra.wait(Caller::Pane(1), None, Duration::from_secs(10))
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        f.orchestra.agent_signal(7, "attention");
+        let reported = waiter.join().unwrap().unwrap();
+        assert_eq!(reported.len(), 1);
+        assert_eq!(reported[0].status, TaskStatus::NeedsInput);
+
+        let again = f
+            .orchestra
+            .wait(Caller::Pane(1), None, Duration::from_millis(20))
+            .unwrap();
+        assert!(again.is_empty(), "an event is reported once");
+
+        f.orchestra.agent_signal(7, "finished");
+        let done = f
+            .orchestra
+            .wait(Caller::Pane(1), Some(&task.id), Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(done[0].status, TaskStatus::Done);
+        let start = Instant::now();
+        let idle = f
+            .orchestra
+            .wait(Caller::Pane(1), None, Duration::from_secs(10))
+            .unwrap();
+        assert!(idle.is_empty());
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "nothing in flight"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checks_run_after_finishing_and_gate_the_report() {
         let f = fixture();
         f.orchestra
-            .orchestrate(Caller::Pane(1), f.repo.path())
+            .orchestrate(Caller::Pane(1), f.repo.path(), Some("exit 1".into()))
             .unwrap();
-        let created: Vec<Created> = (0..6)
-            .map(|n| {
-                f.orchestra
-                    .create_task(Caller::Pane(1), params(&format!("task {n}")))
-                    .unwrap()
-            })
-            .collect();
-        let starts: Vec<bool> = created.iter().map(|c| c.start).collect();
-        assert_eq!(starts, [true, true, true, true, false, false]);
-        assert!(f.orchestra.promote().is_empty());
+        let task = f.start(1, 8);
+        let job = f.orchestra.agent_signal(8, "finished").check.unwrap();
+        assert_eq!(f.task(&task.id).checks, Some(CheckStatus::Running));
+        assert!(f
+            .orchestra
+            .wait(Caller::Pane(1), None, Duration::from_millis(20))
+            .unwrap()
+            .is_empty());
+        f.orchestra.finish_check(&job.task, checks::run(&job));
+        let reported = f
+            .orchestra
+            .wait(Caller::Pane(1), None, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(reported[0].checks, Some(CheckStatus::Failed));
 
-        let first = &created[0].task.id;
-        f.orchestra.prepare_worktree(first).unwrap();
-        f.orchestra.attach_pane(first, 9);
-        let stopped = f.orchestra.stop_task(Caller::Pane(1), first).unwrap();
-        assert_eq!(stopped.panes, vec![9]);
-        assert_eq!(f.orchestra.promote(), vec![created[4].task.id.clone()]);
-        assert!(f.orchestra.promote().is_empty());
+        std::fs::write(
+            f.root.join(&task.run).join(&task.id).join("result.md"),
+            "did the thing",
+        )
+        .unwrap();
+        let result = f.orchestra.result(Caller::Pane(1), &task.id).unwrap();
+        assert_eq!(result.result.as_deref(), Some("did the thing"));
+        assert!(result.check_log.is_some());
+    }
 
-        let worktree = PathBuf::from(&created[0].task.worktree);
-        assert!(
-            worktree.join(".git").exists(),
-            "stop must keep the worktree"
+    #[test]
+    fn follow_ups_reopen_a_finished_task_and_need_an_open_tab() {
+        let f = fixture();
+        f.orchestrate(1);
+        let task = f.start(1, 9);
+        f.orchestra.agent_signal(9, "finished");
+        assert_eq!(
+            f.orchestra
+                .send_target(Caller::Pane(1), &task.id, "also add docs")
+                .unwrap(),
+            9
+        );
+        assert_eq!(f.task(&task.id).status, TaskStatus::Running);
+        assert_eq!(
+            f.orchestra
+                .send_target(Caller::Pane(1), &task.id, "two\nlines")
+                .unwrap_err()
+                .0,
+            "invalid_params"
+        );
+        f.orchestra.stop_task(Caller::Pane(1), &task.id).unwrap();
+        assert_eq!(
+            f.orchestra
+                .send_target(Caller::Pane(1), &task.id, "more")
+                .unwrap_err()
+                .0,
+            "invalid_state"
         );
     }
 
@@ -682,22 +1074,13 @@ mod tests {
     fn orchestrators_see_only_their_run_and_humans_stop_everything() {
         let f = fixture();
         let other_repo = fixture();
-        let a = f
-            .orchestra
-            .orchestrate(Caller::Pane(1), f.repo.path())
-            .unwrap();
+        let a = f.orchestrate(1);
         let b = f
             .orchestra
-            .orchestrate(Caller::Pane(2), other_repo.repo.path())
+            .orchestrate(Caller::Pane(2), other_repo.repo.path(), None)
             .unwrap();
         assert_ne!(a.id, b.id);
-        assert_eq!(
-            f.orchestra
-                .orchestrate(Caller::Pane(1), f.repo.path())
-                .unwrap()
-                .id,
-            a.id
-        );
+        assert_eq!(f.orchestrate(1).id, a.id);
         let ta = f
             .orchestra
             .create_task(Caller::Pane(1), params("a"))
@@ -743,13 +1126,17 @@ mod tests {
     }
 
     #[test]
-    fn invalid_agents_and_briefs_are_rejected_before_anything_is_written() {
+    fn invalid_agents_models_and_briefs_are_rejected_before_anything_is_written() {
         let f = fixture();
-        f.orchestra
-            .orchestrate(Caller::Pane(1), f.repo.path())
-            .unwrap();
+        f.orchestrate(1);
         let mut bad = params("x");
         bad.agent = "sh -c evil".into();
+        assert_eq!(
+            f.orchestra.create_task(Caller::Pane(1), bad).unwrap_err().0,
+            "invalid_params"
+        );
+        let mut bad = params("x");
+        bad.model = Some("--yolo".into());
         assert_eq!(
             f.orchestra.create_task(Caller::Pane(1), bad).unwrap_err().0,
             "invalid_params"
@@ -767,9 +1154,7 @@ mod tests {
     #[test]
     fn restart_interrupts_running_tasks_and_keeps_history() {
         let f = fixture();
-        f.orchestra
-            .orchestrate(Caller::Pane(1), f.repo.path())
-            .unwrap();
+        f.orchestrate(1);
         let created = f
             .orchestra
             .create_task(Caller::Pane(1), params("x"))

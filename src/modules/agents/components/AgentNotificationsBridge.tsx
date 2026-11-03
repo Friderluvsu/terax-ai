@@ -1,3 +1,4 @@
+import { ORCHESTRA_SPACE_ID } from "@/modules/orchestra/lib/space";
 import type { Tab } from "@/modules/tabs";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { hasLeaf, leafIdForPty, onLongCommand } from "@/modules/terminal";
@@ -82,7 +83,11 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
     case "finished": {
       store.setStatus(leafId, "waiting");
       const session = store.sessions[leafId];
-      if (session) route(session, "finished", ctx);
+      // Orchestra workers report to their orchestrator through `task wait`.
+      const worker = ctx.tabs.some(
+        (t) => t.id === session?.tabId && t.spaceId === ORCHESTRA_SPACE_ID,
+      );
+      if (session && !worker) route(session, "finished", ctx);
       maybeTriggerManagedReview(leafId);
       return;
     }

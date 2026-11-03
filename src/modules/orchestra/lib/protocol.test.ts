@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseTaskClose,
   parseTaskOpen,
+  parseTaskSend,
   type TaskOpenRequest,
   workerLaunchCommand,
 } from "./protocol";
@@ -37,6 +38,35 @@ describe("parseTaskOpen", () => {
   });
 });
 
+describe("parseTaskOpen options", () => {
+  it("accepts a model and settings path and rejects option-like models", () => {
+    const parsed = parseTaskOpen({
+      ...base,
+      model: "sonnet",
+      settings_path: "/data/t/claude-settings.json",
+    });
+    expect(parsed.model).toBe("sonnet");
+    expect(parsed.settingsPath).toBe("/data/t/claude-settings.json");
+    expect(() => parseTaskOpen({ ...base, model: "--x" })).toThrow();
+    expect(() => parseTaskOpen({ ...base, model: "a b" })).toThrow();
+  });
+});
+
+describe("parseTaskSend", () => {
+  it("accepts one line of text for a pane", () => {
+    expect(parseTaskSend({ pane_id: 3, text: "fix the test" })).toEqual({
+      paneId: 3,
+      text: "fix the test",
+    });
+    expect(() => parseTaskSend({ pane_id: 3, text: "a\nb" })).toThrow();
+    expect(() => parseTaskSend({ pane_id: 3, text: " " })).toThrow();
+    expect(() =>
+      parseTaskSend({ pane_id: 3, text: "x".repeat(4097) }),
+    ).toThrow();
+    expect(() => parseTaskSend({ text: "x" })).toThrow();
+  });
+});
+
 describe("parseTaskClose", () => {
   it("requires an integer pane id", () => {
     expect(parseTaskClose({ pane_id: 12 })).toBe(12);
@@ -56,9 +86,12 @@ describe("workerLaunchCommand", () => {
 
   it("passes the brief path as one quoted prompt argument", () => {
     const command = workerLaunchCommand(request, "claude", false);
-    expect(command.startsWith("claude --add-dir '/tmp/it'\\''s here' '")).toBe(
-      true,
-    );
+    expect(
+      command.startsWith(
+        "claude --permission-mode acceptEdits --add-dir '/tmp/it'\\''s here' '",
+      ),
+    ).toBe(true);
+    expect(command).toContain("/tmp/it'\\''s here/result.md");
     expect(command).toContain("/tmp/it'\\''s here/brief.md");
     expect(command).toContain("branch task/a1b2c3d4-1");
     expect(command).not.toContain("\n");
@@ -75,6 +108,27 @@ describe("workerLaunchCommand", () => {
         true,
       ),
     ).toContain("--add-dir 'C:\\data\\t-1'");
+  });
+
+  it("runs workers unattended with the sandbox settings and model", () => {
+    const claude = workerLaunchCommand(
+      { ...request, settingsPath: "/d/s.json", model: "opus" },
+      "claude",
+      false,
+    );
+    expect(claude).toMatch(
+      /^claude --settings '\/d\/s\.json' --permission-mode acceptEdits --add-dir .* --model 'opus' '/,
+    );
+    expect(
+      workerLaunchCommand(
+        { ...request, agent: "codex", model: "o3" },
+        "codex",
+        false,
+      ),
+    ).toMatch(/^codex --full-auto --model 'o3' '/);
+    expect(
+      workerLaunchCommand({ ...request, agent: "pi", model: "x" }, "pi", false),
+    ).not.toContain("x'");
   });
 
   it("uses the interactive prompt flag where the agent needs one", () => {

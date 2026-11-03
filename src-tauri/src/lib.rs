@@ -335,6 +335,8 @@ pub fn run() {
             workspace::workspace_current_dir,
             control::control_frontend_ready,
             control::control_respond,
+            control::orchestra_tasks,
+            control::orchestra_stop,
             modules::mobile::mobile_start,
             modules::mobile::mobile_stop,
             modules::mobile::mobile_status,

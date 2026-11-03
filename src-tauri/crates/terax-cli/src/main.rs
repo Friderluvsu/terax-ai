@@ -9,11 +9,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use terax_control_protocol::{
-    validate_brief, validate_title, CallerContext, ControlDescriptor, ControlRequest,
-    ControlResponse, OpenParams, TaskInfo, MAX_BRIEF_BYTES, MAX_MESSAGE_BYTES, METHOD_CAPABILITIES,
+    validate_brief, validate_check_command, validate_model, validate_send_text, validate_title,
+    CallerContext, ControlDescriptor, ControlRequest, ControlResponse, OpenParams, TaskInfo,
+    DEFAULT_WAIT_SECS, MAX_BRIEF_BYTES, MAX_MESSAGE_BYTES, MAX_WAIT_SECS, METHOD_CAPABILITIES,
     METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING, METHOD_RUN_STOP,
-    METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_STOP, PROTOCOL_VERSION, SERVER_RESPONSE_ID,
-    TASK_AGENTS,
+    METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_RESULT, METHOD_TASK_SEND, METHOD_TASK_STOP,
+    METHOD_TASK_WAIT, PROTOCOL_VERSION, SERVER_RESPONSE_ID, TASK_AGENTS,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -102,7 +103,8 @@ fn run(args: Vec<OsString>) -> Result<(), CliError> {
                 params,
                 caller: CallerContext { pane_id: caller },
             };
-            let response = send_request(&endpoint.address, &request, response_timeout(method))?;
+            let timeout = response_timeout(method, &request.params);
+            let response = send_request(&endpoint.address, &request, timeout)?;
             if !response.ok {
                 let error = response.error.unwrap_or_else(|| {
                     terax_control_protocol::ControlError::new(
@@ -267,10 +269,18 @@ fn parse_open(args: Vec<OsString>) -> Result<Action, CliError> {
     })
 }
 
-fn response_timeout(method: &str) -> Duration {
+fn response_timeout(method: &str, params: &Value) -> Duration {
     match method {
         METHOD_ORCHESTRATE | METHOD_TASK_CREATE | METHOD_TASK_STOP | METHOD_RUN_STOP => {
             ORCHESTRA_TIMEOUT
+        }
+        METHOD_TASK_WAIT => {
+            let secs = params
+                .get("timeout_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(DEFAULT_WAIT_SECS)
+                .min(MAX_WAIT_SECS);
+            Duration::from_secs(secs) + IO_TIMEOUT
         }
         _ => IO_TIMEOUT,
     }
@@ -284,35 +294,101 @@ fn utf8_arg(value: &OsString, what: &str) -> Result<String, CliError> {
 }
 
 fn parse_orchestrate(args: Vec<OsString>) -> Result<Action, CliError> {
-    no_extra_args(args, Action::Help)?;
+    let check = match args.as_slice() {
+        [] => None,
+        [flag, command] if flag == "--check" => {
+            let command = utf8_arg(command, "check command")?;
+            validate_check_command(&command).map_err(usage_error)?;
+            Some(command)
+        }
+        _ => return Err(usage_error("orchestrate accepts only --check <command>")),
+    };
     let cwd = env::current_dir()
         .map_err(|error| usage_error(format!("cannot read the current directory: {error}")))?;
     let cwd = utf8_arg(&cwd.into_os_string(), "current directory")?;
+    let mut params = json!({ "cwd": cwd });
+    if let Some(check) = check {
+        params["check"] = json!(check);
+    }
     Ok(Action::Request {
         method: METHOD_ORCHESTRATE,
-        params: json!({ "cwd": cwd }),
+        params,
+    })
+}
+
+fn parse_task_wait(args: Vec<OsString>) -> Result<Action, CliError> {
+    let mut params = json!({});
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].to_str() {
+            Some("--timeout") => {
+                let secs = args
+                    .get(index + 1)
+                    .and_then(|value| value.to_str())
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .filter(|secs| (1..=MAX_WAIT_SECS).contains(secs))
+                    .ok_or_else(|| {
+                        usage_error(format!("--timeout requires 1..={MAX_WAIT_SECS} seconds"))
+                    })?;
+                params["timeout_secs"] = json!(secs);
+                index += 2;
+            }
+            Some(task) if !task.starts_with('-') && params.get("task").is_none() => {
+                params["task"] = json!(task);
+                index += 1;
+            }
+            _ => return Err(usage_error("task wait accepts [<task>] [--timeout <secs>]")),
+        }
+    }
+    Ok(Action::Request {
+        method: METHOD_TASK_WAIT,
+        params,
+    })
+}
+
+fn parse_task_send(args: Vec<OsString>) -> Result<Action, CliError> {
+    let [task, words @ ..] = args.as_slice() else {
+        return Err(usage_error("task send requires a task id and text"));
+    };
+    let words = words
+        .iter()
+        .map(|word| utf8_arg(word, "text"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let text = words.join(" ");
+    validate_send_text(&text).map_err(usage_error)?;
+    Ok(Action::Request {
+        method: METHOD_TASK_SEND,
+        params: json!({ "task": utf8_arg(task, "task id")?, "text": text }),
     })
 }
 
 fn parse_task(mut args: Vec<OsString>) -> Result<Action, CliError> {
     if args.is_empty() {
         return Err(usage_error(
-            "task requires a subcommand: create, list or stop",
+            "task requires a subcommand: create, list, wait, result, send or stop",
         ));
     }
     let sub = args.remove(0);
     match sub.to_str() {
         Some("create") => parse_task_create(args, read_brief),
         Some("list") => request_without_params(args, METHOD_TASK_LIST),
-        Some("stop") => match args.as_slice() {
+        Some("wait") => parse_task_wait(args),
+        Some("send") => parse_task_send(args),
+        Some(sub @ ("stop" | "result")) => match args.as_slice() {
             [task] => Ok(Action::Request {
-                method: METHOD_TASK_STOP,
+                method: if sub == "stop" {
+                    METHOD_TASK_STOP
+                } else {
+                    METHOD_TASK_RESULT
+                },
                 params: json!({ "task": utf8_arg(task, "task id")? }),
             }),
-            _ => Err(usage_error("task stop requires exactly one task id")),
+            _ => Err(usage_error(format!(
+                "task {sub} requires exactly one task id"
+            ))),
         },
         _ => Err(usage_error(
-            "unknown task subcommand; use create, list or stop",
+            "unknown task subcommand; use create, list, wait, result, send or stop",
         )),
     }
 }
@@ -324,6 +400,7 @@ fn parse_task_create(
     let mut agent = None;
     let mut brief = None;
     let mut title = None;
+    let mut model = None;
     let mut index = 0;
     while index < args.len() {
         let flag = args[index].to_str().unwrap_or("");
@@ -337,6 +414,7 @@ fn parse_task_create(
             "--agent" | "-a" => agent = Some(utf8_arg(&take("--agent")?, "agent")?),
             "--brief" | "-b" => brief = Some(take("--brief")?),
             "--title" | "-t" => title = Some(utf8_arg(&take("--title")?, "title")?),
+            "--model" | "-m" => model = Some(utf8_arg(&take("--model")?, "model")?),
             other => return Err(usage_error(format!("unknown task create option '{other}'"))),
         }
         index += 2;
@@ -353,9 +431,15 @@ fn parse_task_create(
     if let Some(title) = &title {
         validate_title(title).map_err(usage_error)?;
     }
+    if let Some(model) = &model {
+        validate_model(model).map_err(usage_error)?;
+    }
     let mut params = json!({ "agent": agent, "brief": brief });
     if let Some(title) = title {
         params["title"] = json!(title);
+    }
+    if let Some(model) = model {
+        params["model"] = json!(model);
     }
     Ok(Action::Request {
         method: METHOD_TASK_CREATE,
@@ -684,11 +768,40 @@ fn print_result(method: &str, result: Value, as_json: bool) {
             let run = result.get("run").and_then(Value::as_str).unwrap_or("?");
             let base = result.get("base").and_then(Value::as_str).unwrap_or("?");
             println!("This pane orchestrates run {run} (tasks branch from {base})");
+            if let Some(check) = result.get("check").and_then(Value::as_str) {
+                println!("Finished tasks run checks: {check}");
+            }
         }
         METHOD_TASK_CREATE => match result.get("task").cloned().map(serde_json::from_value) {
             Some(Ok(task)) => print_task(&task),
             _ => println!("{result}"),
         },
+        METHOD_TASK_WAIT => {
+            let tasks: Vec<TaskInfo> = result
+                .get("tasks")
+                .cloned()
+                .and_then(|tasks| serde_json::from_value(tasks).ok())
+                .unwrap_or_default();
+            if tasks.is_empty() {
+                println!("Nothing to report: no task is in flight or the wait timed out");
+            }
+            for task in &tasks {
+                print_task(task);
+            }
+        }
+        METHOD_TASK_RESULT => {
+            if let Some(Ok(task)) = result.get("task").cloned().map(serde_json::from_value) {
+                print_task(&task);
+            }
+            match result.get("result").and_then(Value::as_str) {
+                Some(text) => println!("\n{}", text.trim_end()),
+                None => println!("\nThe worker wrote no result.md"),
+            }
+            if let Some(log) = result.get("check_log").and_then(Value::as_str) {
+                println!("\nCheck log (tail):\n{}", log.trim_end());
+            }
+        }
+        METHOD_TASK_SEND => println!("Sent"),
         METHOD_TASK_LIST => {
             let tasks: Vec<TaskInfo> = result
                 .get("tasks")
@@ -737,6 +850,11 @@ fn print_task(task: &TaskInfo) {
         task.branch.as_str(),
         task.worktree.as_str(),
     ];
+    let checks = task
+        .checks
+        .and_then(|checks| serde_json::to_value(checks).ok())
+        .and_then(|value| value.as_str().map(|status| format!("checks:{status}")));
+    fields.extend(checks.as_deref());
     fields.extend(task.title.as_deref());
     println!("{}", fields.join("\t"));
     if let Some(error) = &task.error {
@@ -748,7 +866,7 @@ fn print_help() {
     println!(
         "Terax command line interface\n\n\
 Usage:\n  terax <file> [--line <n>] [--no-focus] [--json]\n  terax open <file> [--line <n>] [--no-focus] [--json]\n  terax ping [--json]\n  terax capabilities [--json]\n  terax identify [--json]\n  terax --version\n\n\
-Orchestration:\n  terax orchestrate                 make this pane the orchestrator of the current repository\n  terax task create --brief <file|-> [--agent claude] [--title <text>]\n  terax task list\n  terax task stop <task>\n  terax run stop [<run>]\n\n\
+Orchestration:\n  terax orchestrate [--check <cmd>]  make this pane the orchestrator; <cmd> runs in each finished worktree\n  terax task create --brief <file|-> [--agent claude] [--title <text>] [--model <name>]\n  terax task list\n  terax task wait [<task>] [--timeout <secs>]   block until a task finishes or needs input\n  terax task result <task>          print the worker's result.md and check log\n  terax task send <task> <text>     type a follow-up into the worker\n  terax task stop <task>\n  terax run stop [<run>]\n\n\
 The app must be running. Commands launched in a Terax pane target that pane's space.\n\
 Each task runs in its own worktree on branch task/<id>; at most 4 run at once and the rest queue.\n\
 Stopping keeps the worktree."
@@ -883,9 +1001,64 @@ mod tests {
 
     #[test]
     fn orchestration_requests_wait_longer_than_plain_requests() {
-        assert_eq!(response_timeout(METHOD_PING), IO_TIMEOUT);
-        assert_eq!(response_timeout(METHOD_TASK_LIST), IO_TIMEOUT);
-        assert_eq!(response_timeout(METHOD_TASK_CREATE), ORCHESTRA_TIMEOUT);
+        let none = json!({});
+        assert_eq!(response_timeout(METHOD_PING, &none), IO_TIMEOUT);
+        assert_eq!(response_timeout(METHOD_TASK_LIST, &none), IO_TIMEOUT);
+        assert_eq!(
+            response_timeout(METHOD_TASK_CREATE, &none),
+            ORCHESTRA_TIMEOUT
+        );
+        assert_eq!(
+            response_timeout(METHOD_TASK_WAIT, &json!({ "timeout_secs": 30 })),
+            Duration::from_secs(30) + IO_TIMEOUT
+        );
+        assert_eq!(
+            response_timeout(METHOD_TASK_WAIT, &json!({ "timeout_secs": 999_999 })),
+            Duration::from_secs(MAX_WAIT_SECS) + IO_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn parses_wait_result_send_and_model() {
+        let request = |values: &[&str]| match parse_args(args(values)).expect("parse").action {
+            Action::Request { method, params } => (method, params),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(request(&["task", "wait"]), (METHOD_TASK_WAIT, json!({})));
+        assert_eq!(
+            request(&["task", "wait", "ab-1", "--timeout", "60"]),
+            (
+                METHOD_TASK_WAIT,
+                json!({ "task": "ab-1", "timeout_secs": 60 })
+            )
+        );
+        assert!(parse_args(args(&["task", "wait", "--timeout", "0"])).is_err());
+        assert!(parse_args(args(&["task", "wait", "a", "b"])).is_err());
+        assert_eq!(
+            request(&["task", "result", "ab-1"]),
+            (METHOD_TASK_RESULT, json!({ "task": "ab-1" }))
+        );
+        assert_eq!(
+            request(&["task", "send", "ab-1", "fix", "the", "test"]),
+            (
+                METHOD_TASK_SEND,
+                json!({ "task": "ab-1", "text": "fix the test" })
+            )
+        );
+        assert!(parse_args(args(&["task", "send", "ab-1"])).is_err());
+        assert!(parse_args(args(&["task", "send", "ab-1", "a\nb"])).is_err());
+
+        let action = parse_task_create(args(&["--brief", "b", "--model", "sonnet"]), brief_stub)
+            .expect("model");
+        let Action::Request { params, .. } = action else {
+            panic!("expected request");
+        };
+        assert_eq!(params["model"], "sonnet");
+        assert!(parse_task_create(args(&["--brief", "b", "--model", "--x"]), brief_stub).is_err());
+
+        let (_, params) = request(&["orchestrate", "--check", "pnpm test"]);
+        assert_eq!(params["check"], "pnpm test");
+        assert!(parse_args(args(&["orchestrate", "--check"])).is_err());
     }
 
     #[test]

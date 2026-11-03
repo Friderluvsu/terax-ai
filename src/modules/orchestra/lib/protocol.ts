@@ -2,8 +2,7 @@ import type { AgentLauncherId } from "@/modules/agents";
 import { AGENT_LAUNCHERS } from "@/modules/agents";
 import { quoteShellArg } from "@/lib/shellQuote";
 
-export const ORCHESTRA_SPACE_ID = "orchestra";
-export const ORCHESTRA_SPACE_NAME = "Orchestra";
+export { ORCHESTRA_SPACE_ID, ORCHESTRA_SPACE_NAME } from "./space";
 
 export type TaskOpenRequest = {
   task: string;
@@ -11,7 +10,11 @@ export type TaskOpenRequest = {
   title?: string;
   cwd: string;
   briefPath: string;
+  model?: string;
+  settingsPath?: string;
 };
+
+export type TaskSendRequest = { paneId: number; text: string };
 
 export class TaskRequestError extends Error {
   constructor(
@@ -24,9 +27,29 @@ export class TaskRequestError extends Error {
 
 const TASK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+const MODEL = /^[A-Za-z0-9._:/[\]][A-Za-z0-9._:/[\]-]{0,63}$/;
+const MAX_SEND_BYTES = 4096;
 
 function invalid(message: string): never {
   throw new TaskRequestError("invalid_params", message);
+}
+
+function optional<T>(
+  value: unknown,
+  parse: (value: unknown) => T,
+): T | undefined {
+  return value === undefined || value === null ? undefined : parse(value);
+}
+
+function requirePaneId(params: unknown): number {
+  const pane =
+    typeof params === "object" && params !== null
+      ? (params as Record<string, unknown>).pane_id
+      : undefined;
+  if (!Number.isSafeInteger(pane) || (pane as number) < 0) {
+    invalid("pane_id must be a non-negative integer");
+  }
+  return pane as number;
 }
 
 function requireText(value: unknown, name: string, max: number): string {
@@ -53,39 +76,61 @@ export function parseTaskOpen(params: unknown): TaskOpenRequest {
   return {
     task,
     agent,
-    title:
-      value.title === undefined || value.title === null
-        ? undefined
-        : requireText(value.title, "title", 120),
+    title: optional(value.title, (title) => requireText(title, "title", 120)),
     cwd: requireText(value.cwd, "cwd", 4096),
     briefPath: requireText(value.brief_path, "brief_path", 4096),
+    model: optional(value.model, (model) => {
+      if (typeof model !== "string" || !MODEL.test(model)) {
+        invalid("model is malformed");
+      }
+      return model;
+    }),
+    settingsPath: optional(value.settings_path, (path) =>
+      requireText(path, "settings_path", 4096),
+    ),
   };
 }
 
 export function parseTaskClose(params: unknown): number {
-  const pane =
-    typeof params === "object" && params !== null
-      ? (params as Record<string, unknown>).pane_id
-      : undefined;
-  if (!Number.isSafeInteger(pane) || (pane as number) < 0) {
-    invalid("pane_id must be a non-negative integer");
+  return requirePaneId(params);
+}
+
+export function parseTaskSend(params: unknown): TaskSendRequest {
+  const paneId = requirePaneId(params);
+  const text = (params as Record<string, unknown>).text;
+  if (
+    typeof text !== "string" ||
+    text.trim().length === 0 ||
+    new TextEncoder().encode(text).length > MAX_SEND_BYTES ||
+    CONTROL_CHARACTERS.test(text)
+  ) {
+    invalid(`text must be a single line of 1-${MAX_SEND_BYTES} bytes`);
   }
-  return pane as number;
+  return { paneId, text };
 }
 
 // Only the brief path is passed on the command line; the brief itself can be
 // long and is never pasted into the shell.
 export function workerPrompt(request: TaskOpenRequest): string {
+  const dir = parentDir(request.briefPath);
+  const sep = request.briefPath.includes("\\") ? "\\" : "/";
   return [
     `You are a worker on task ${request.task} in a dedicated git worktree on branch task/${request.task}.`,
     `Read the task brief at ${request.briefPath} and complete it in this worktree.`,
     "Commit your work to this branch. Do not push, merge, or change other branches.",
+    `When done, write a short summary (what changed, how you verified it, open questions) to ${dir}${sep}result.md.`,
   ].join(" ");
 }
 
 const PROMPT_FLAG: Partial<Record<AgentLauncherId, string>> = {
   gemini: "-i",
   opencode: "--prompt",
+};
+
+const MODEL_FLAG: Partial<Record<AgentLauncherId, string>> = {
+  claude: "--model",
+  codex: "--model",
+  gemini: "-m",
 };
 
 function parentDir(path: string): string {
@@ -99,12 +144,23 @@ export function workerLaunchCommand(
   windows?: boolean,
 ): string {
   const parts = [command];
-  // The brief lives beside the worktree; without this Claude asks before reading it.
+  // Workers run unattended: edits and sandboxed commands go through without
+  // prompts, and the brief beside the worktree is readable.
   if (request.agent === "claude") {
+    if (request.settingsPath) {
+      parts.push("--settings", quoteShellArg(request.settingsPath, windows));
+    }
     parts.push(
+      "--permission-mode",
+      "acceptEdits",
       "--add-dir",
       quoteShellArg(parentDir(request.briefPath), windows),
     );
+  }
+  if (request.agent === "codex") parts.push("--full-auto");
+  const modelFlag = MODEL_FLAG[request.agent];
+  if (modelFlag && request.model) {
+    parts.push(modelFlag, quoteShellArg(request.model, windows));
   }
   const flag = PROMPT_FLAG[request.agent];
   if (flag) parts.push(flag);

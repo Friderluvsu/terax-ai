@@ -11,6 +11,9 @@ pub struct TaskPaths {
     pub worktree: PathBuf,
     pub target: PathBuf,
     pub brief: PathBuf,
+    pub result: PathBuf,
+    pub check_log: PathBuf,
+    pub claude_settings: PathBuf,
 }
 
 /// Every task path is derived here, so a crafted id can never point a
@@ -25,9 +28,20 @@ pub fn task_paths(root: &Path, run_id: &str, task_id: &str) -> Result<TaskPaths,
         worktree: dir.join("worktree"),
         target: dir.join("target"),
         brief: dir.join("brief.md"),
+        result: dir.join("result.md"),
+        check_log: dir.join("check.log"),
+        claude_settings: dir.join("claude-settings.json"),
         dir,
     };
-    for path in [&paths.dir, &paths.worktree, &paths.target, &paths.brief] {
+    for path in [
+        &paths.dir,
+        &paths.worktree,
+        &paths.target,
+        &paths.brief,
+        &paths.result,
+        &paths.check_log,
+        &paths.claude_settings,
+    ] {
         if !is_strictly_under(path, &run_dir) {
             return Err(format!("task path escapes the run: {}", path.display()));
         }

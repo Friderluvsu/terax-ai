@@ -1601,6 +1601,7 @@ export default function App() {
     onOpen: openControlFile,
     onTaskOpen: orchestraTabs.openTask,
     onTaskClose: orchestraTabs.closeTask,
+    onTaskSend: orchestraTabs.sendTask,
   });
   useMobileBridge({ tabsRef, activeTabIdRef: activeIdRef, warmTab });
 

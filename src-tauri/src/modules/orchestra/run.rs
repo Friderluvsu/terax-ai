@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use terax_control_protocol::{TaskInfo, TaskStatus};
+use terax_control_protocol::{CheckStatus, TaskInfo, TaskStatus};
 
 /// Each worker costs 300-500 MB, so the cap is global across runs.
 pub const MAX_WORKERS: usize = 4;
@@ -19,22 +19,56 @@ pub struct Run {
     pub created_at_ms: u64,
     #[serde(default)]
     pub stopped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
     #[serde(default)]
     pub tasks: Vec<TaskInfo>,
 }
 
-pub fn worker_slots_in_use<'a>(runs: impl IntoIterator<Item = &'a Run>) -> usize {
-    runs.into_iter()
-        .flat_map(|run| &run.tasks)
-        .filter(|task| task.status.holds_worker_slot())
-        .count()
+/// A task consumes CPU and memory while its agent works or its checks run.
+pub fn is_busy(task: &TaskInfo) -> bool {
+    task.status.is_working()
+        || (task.status == TaskStatus::Done && task.checks == Some(CheckStatus::Running))
 }
 
-pub fn admit<'a>(runs: impl IntoIterator<Item = &'a Run>) -> TaskStatus {
-    if worker_slots_in_use(runs) < MAX_WORKERS {
-        TaskStatus::Starting
-    } else {
-        TaskStatus::Queued
+/// An idle finished agent keeps its tab for follow-ups until a slot is needed.
+pub fn is_idle_tab(task: &TaskInfo) -> bool {
+    task.status == TaskStatus::Done && task.pane_id.is_some() && !is_busy(task)
+}
+
+pub fn has_live_tab(task: &TaskInfo) -> bool {
+    is_busy(task) || is_idle_tab(task)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Admission {
+    Start { evict: Option<String> },
+    Queue,
+}
+
+fn tasks_in_order<'a>(runs: impl IntoIterator<Item = &'a Run>) -> Vec<&'a TaskInfo> {
+    let mut runs: Vec<&Run> = runs.into_iter().collect();
+    runs.sort_by_key(|run| (run.created_at_ms, run.id.clone()));
+    runs.into_iter().flat_map(|run| &run.tasks).collect()
+}
+
+/// At most `MAX_WORKERS` agents are resident: busy ones never yield, idle
+/// finished ones are closed oldest first to make room.
+pub fn admit<'a>(runs: impl IntoIterator<Item = &'a Run>) -> Admission {
+    let tasks = tasks_in_order(runs);
+    let busy = tasks.iter().filter(|task| is_busy(task)).count();
+    if busy >= MAX_WORKERS {
+        return Admission::Queue;
+    }
+    let live = tasks.iter().filter(|task| has_live_tab(task)).count();
+    if live < MAX_WORKERS {
+        return Admission::Start { evict: None };
+    }
+    match tasks.iter().find(|task| is_idle_tab(task)) {
+        Some(task) => Admission::Start {
+            evict: Some(task.id.clone()),
+        },
+        None => Admission::Queue,
     }
 }
 
@@ -52,44 +86,126 @@ pub fn next_task_id(run: &Run) -> String {
     format!("{}-{}", run.id, run.tasks.len() + 1)
 }
 
-/// Oldest queued tasks move to Starting while worker slots are free.
-pub fn promote(runs: &mut BTreeMap<String, Run>) -> Vec<String> {
-    let mut free = MAX_WORKERS.saturating_sub(worker_slots_in_use(runs.values()));
-    let mut queued: Vec<(&String, usize)> = runs
-        .iter()
-        .flat_map(|(run_id, run)| {
-            run.tasks
-                .iter()
-                .enumerate()
-                .filter(|(_, task)| task.status == TaskStatus::Queued)
-                .map(move |(index, _)| (run_id, index))
-        })
-        .collect();
-    queued.sort_by_key(|(run_id, index)| (runs[*run_id].created_at_ms, *index));
-    let picked: Vec<(String, usize)> = queued
-        .into_iter()
-        .take_while(|_| {
-            let take = free > 0;
-            free = free.saturating_sub(1);
-            take
-        })
-        .map(|(run_id, index)| (run_id.clone(), index))
-        .collect();
-    picked
-        .into_iter()
-        .filter_map(|(run_id, index)| {
-            let task = runs.get_mut(&run_id)?.tasks.get_mut(index)?;
-            task.status = TaskStatus::Starting;
-            Some(task.id.clone())
-        })
-        .collect()
+fn task_mut<'a>(runs: &'a mut BTreeMap<String, Run>, id: &str) -> Option<&'a mut TaskInfo> {
+    runs.values_mut()
+        .flat_map(|run| run.tasks.iter_mut())
+        .find(|task| task.id == id)
 }
 
-/// Panes do not survive a restart, so live tasks are marked interrupted on load.
+#[derive(Debug, Default, PartialEq)]
+pub struct Promotion {
+    pub started: Vec<String>,
+    /// Panes of idle finished workers closed to make room.
+    pub evicted: Vec<u32>,
+}
+
+/// Oldest queued tasks move to Starting while the admission policy allows.
+pub fn promote(runs: &mut BTreeMap<String, Run>) -> Promotion {
+    let mut promotion = Promotion::default();
+    loop {
+        let Some(next) = tasks_in_order(runs.values())
+            .into_iter()
+            .find(|task| task.status == TaskStatus::Queued)
+            .map(|task| task.id.clone())
+        else {
+            return promotion;
+        };
+        match admit(runs.values()) {
+            Admission::Queue => return promotion,
+            Admission::Start { evict } => {
+                if let Some(pane) = evict
+                    .and_then(|id| task_mut(runs, &id))
+                    .and_then(|task| task.pane_id.take())
+                {
+                    promotion.evicted.push(pane);
+                }
+                if let Some(task) = task_mut(runs, &next) {
+                    task.status = TaskStatus::Starting;
+                }
+                promotion.started.push(next);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Signal {
+    Working,
+    Attention,
+    Finished,
+}
+
+pub fn parse_signal(kind: &str) -> Option<Signal> {
+    match kind {
+        "started" | "working" => Some(Signal::Working),
+        "attention" => Some(Signal::Attention),
+        "finished" | "exited" => Some(Signal::Finished),
+        _ => None,
+    }
+}
+
+/// Applies an agent hook signal. Returns true when checks should start.
+pub fn apply_signal(task: &mut TaskInfo, signal: Signal, has_check: bool) -> bool {
+    if !matches!(
+        task.status,
+        TaskStatus::Running | TaskStatus::NeedsInput | TaskStatus::Done
+    ) {
+        return false;
+    }
+    match signal {
+        Signal::Working => {
+            if task.status != TaskStatus::Running {
+                task.status = TaskStatus::Running;
+                task.checks = None;
+                task.unreported = false;
+            }
+            false
+        }
+        Signal::Attention => {
+            task.status = TaskStatus::NeedsInput;
+            task.unreported = true;
+            false
+        }
+        Signal::Finished => {
+            if task.status == TaskStatus::Done {
+                return false;
+            }
+            task.status = TaskStatus::Done;
+            if has_check {
+                task.checks = Some(CheckStatus::Running);
+                task.unreported = false;
+                true
+            } else {
+                task.unreported = true;
+                false
+            }
+        }
+    }
+}
+
+/// What `task.wait` reports: settled states the orchestrator has to act on.
+pub fn is_settled(task: &TaskInfo) -> bool {
+    match task.status {
+        TaskStatus::NeedsInput | TaskStatus::Failed | TaskStatus::Stopped => true,
+        TaskStatus::Done => task.checks != Some(CheckStatus::Running),
+        TaskStatus::Interrupted => true,
+        _ => false,
+    }
+}
+
+/// Panes do not survive a restart: working and queued tasks are interrupted,
+/// finished ones keep their result but lose their tab.
 pub fn interrupt_live_tasks(run: &mut Run) -> bool {
     let mut changed = false;
     for task in &mut run.tasks {
-        if task.status.is_active() {
+        if task.status == TaskStatus::Done {
+            if task.pane_id.take().is_some() || task.checks == Some(CheckStatus::Running) {
+                if task.checks == Some(CheckStatus::Running) {
+                    task.checks = None;
+                }
+                changed = true;
+            }
+        } else if task.status.is_active() {
             task.status = TaskStatus::Interrupted;
             task.pane_id = None;
             changed = true;
@@ -179,8 +295,11 @@ mod tests {
             branch: format!("task/{run}-{n}"),
             worktree: String::new(),
             brief_path: String::new(),
-            pane_id: Some(n as u32),
+            pane_id: Some(n as u32 + 100),
             error: None,
+            model: None,
+            checks: None,
+            unreported: false,
         }
     }
 
@@ -191,42 +310,37 @@ mod tests {
             base: "main".into(),
             created_at_ms,
             stopped: false,
+            check: None,
             tasks,
         }
     }
 
-    #[test]
-    fn concurrency_cap_is_global_and_queues_the_rest() {
-        let mut runs = BTreeMap::new();
-        let mut a = run("aaaa", 1, Vec::new());
-        for n in 1..=6 {
-            let status = admit(std::iter::once(&a));
-            a.tasks.push(task("aaaa", n, status));
-        }
-        let statuses: Vec<_> = a.tasks.iter().map(|t| t.status).collect();
-        assert_eq!(
-            statuses,
-            [
-                TaskStatus::Starting,
-                TaskStatus::Starting,
-                TaskStatus::Starting,
-                TaskStatus::Starting,
-                TaskStatus::Queued,
-                TaskStatus::Queued,
-            ]
-        );
-        runs.insert(a.id.clone(), a);
-        let b = run("bbbb", 2, Vec::new());
-        assert_eq!(admit(runs.values().chain([&b])), TaskStatus::Queued);
+    fn admit_into(r: &mut Run) -> Admission {
+        let admission = admit(std::iter::once(&*r));
+        let status = match admission {
+            Admission::Start { .. } => TaskStatus::Starting,
+            Admission::Queue => TaskStatus::Queued,
+        };
+        let n = r.tasks.len() + 1;
+        r.tasks.push(task(&r.id.clone(), n, status));
+        admission
     }
 
     #[test]
-    fn promotion_fills_only_freed_slots_in_creation_order() {
+    fn at_most_four_workers_are_busy_and_the_rest_queue() {
+        let mut a = run("aaaa", 1, Vec::new());
+        for _ in 0..4 {
+            assert_eq!(admit_into(&mut a), Admission::Start { evict: None });
+        }
+        assert_eq!(admit_into(&mut a), Admission::Queue);
+        assert_eq!(a.tasks.iter().filter(|t| is_busy(t)).count(), MAX_WORKERS);
+        let b = run("bbbb", 2, Vec::new());
+        assert_eq!(admit([&a, &b]), Admission::Queue);
+    }
+
+    #[test]
+    fn idle_finished_tabs_are_evicted_oldest_first_but_busy_ones_never() {
         let mut runs = BTreeMap::new();
-        runs.insert(
-            "bbbb".to_string(),
-            run("bbbb", 2, vec![task("bbbb", 1, TaskStatus::Queued)]),
-        );
         runs.insert(
             "aaaa".to_string(),
             run(
@@ -234,24 +348,73 @@ mod tests {
                 1,
                 vec![
                     task("aaaa", 1, TaskStatus::Running),
-                    task("aaaa", 2, TaskStatus::Running),
-                    task("aaaa", 3, TaskStatus::Running),
-                    task("aaaa", 4, TaskStatus::Stopped),
+                    task("aaaa", 2, TaskStatus::Done),
+                    task("aaaa", 3, TaskStatus::Done),
+                    task("aaaa", 4, TaskStatus::Running),
                     task("aaaa", 5, TaskStatus::Queued),
+                    task("aaaa", 6, TaskStatus::Queued),
                 ],
             ),
         );
-        assert_eq!(promote(&mut runs), vec!["aaaa-5".to_string()]);
-        assert_eq!(worker_slots_in_use(runs.values()), MAX_WORKERS);
-        assert!(promote(&mut runs).is_empty());
-        assert_eq!(runs["bbbb"].tasks[0].status, TaskStatus::Queued);
+        let promotion = promote(&mut runs);
+        assert_eq!(promotion.started, vec!["aaaa-5", "aaaa-6"]);
+        assert_eq!(promotion.evicted, vec![102, 103]);
+        let tasks = &runs["aaaa"].tasks;
+        assert_eq!(
+            tasks.iter().filter(|t| has_live_tab(t)).count(),
+            MAX_WORKERS
+        );
+        assert_eq!(
+            tasks[1].status,
+            TaskStatus::Done,
+            "eviction keeps the result"
+        );
 
-        runs.get_mut("aaaa").unwrap().tasks[0].status = TaskStatus::Stopped;
-        assert_eq!(promote(&mut runs), vec!["bbbb-1".to_string()]);
+        runs.get_mut("aaaa")
+            .unwrap()
+            .tasks
+            .push(task("aaaa", 7, TaskStatus::Queued));
+        assert_eq!(promote(&mut runs), Promotion::default());
     }
 
     #[test]
-    fn reload_interrupts_live_tasks_and_frees_their_slots() {
+    fn a_running_check_keeps_the_slot_busy() {
+        let mut t = task("aaaa", 1, TaskStatus::Done);
+        t.checks = Some(CheckStatus::Running);
+        assert!(is_busy(&t));
+        assert!(!is_idle_tab(&t));
+        assert!(!is_settled(&t));
+        t.checks = Some(CheckStatus::Failed);
+        assert!(!is_busy(&t));
+        assert!(is_settled(&t));
+    }
+
+    #[test]
+    fn hook_signals_drive_status_and_reporting() {
+        let mut t = task("aaaa", 1, TaskStatus::Running);
+        assert!(!apply_signal(&mut t, Signal::Attention, false));
+        assert_eq!(t.status, TaskStatus::NeedsInput);
+        assert!(t.unreported);
+        apply_signal(&mut t, Signal::Working, false);
+        assert_eq!(t.status, TaskStatus::Running);
+        assert!(!t.unreported);
+        assert!(apply_signal(&mut t, Signal::Finished, true));
+        assert_eq!(t.checks, Some(CheckStatus::Running));
+        assert!(!t.unreported, "reported only after checks finish");
+        assert!(
+            !apply_signal(&mut t, Signal::Finished, true),
+            "no double checks"
+        );
+
+        let mut stopped = task("aaaa", 2, TaskStatus::Stopped);
+        apply_signal(&mut stopped, Signal::Working, false);
+        assert_eq!(stopped.status, TaskStatus::Stopped);
+        assert_eq!(parse_signal("exited"), Some(Signal::Finished));
+        assert_eq!(parse_signal("bogus"), None);
+    }
+
+    #[test]
+    fn reload_interrupts_working_tasks_and_keeps_finished_results() {
         let mut r = run(
             "aaaa",
             1,
@@ -259,13 +422,15 @@ mod tests {
                 task("aaaa", 1, TaskStatus::Running),
                 task("aaaa", 2, TaskStatus::Queued),
                 task("aaaa", 3, TaskStatus::Stopped),
+                task("aaaa", 4, TaskStatus::Done),
             ],
         );
         assert!(interrupt_live_tasks(&mut r));
-        assert_eq!(worker_slots_in_use([&r]), 0);
         assert_eq!(r.tasks[0].status, TaskStatus::Interrupted);
-        assert_eq!(r.tasks[0].pane_id, None);
+        assert_eq!(r.tasks[1].status, TaskStatus::Interrupted);
         assert_eq!(r.tasks[2].status, TaskStatus::Stopped);
+        assert_eq!(r.tasks[3].status, TaskStatus::Done);
+        assert!(r.tasks.iter().all(|t| !has_live_tab(t)));
         assert!(!interrupt_live_tasks(&mut r));
     }
 
@@ -279,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped_runs_and_full_runs_refuse_new_tasks() {
+    fn stopped_runs_refuse_new_tasks() {
         let mut r = run("aaaa", 1, Vec::new());
         assert!(can_add_task(&r).is_ok());
         assert_eq!(next_task_id(&r), "aaaa-1");

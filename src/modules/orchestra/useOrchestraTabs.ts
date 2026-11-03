@@ -29,6 +29,8 @@ type Options = {
   closeTab: (id: number) => void;
 };
 
+const SUBMIT_DELAY_MS = 150;
+
 export type TaskOpened = { tab_id: number; pane_id: number; space_id: string };
 
 function ensureOrchestraSpace(): string {
@@ -108,5 +110,12 @@ export function useOrchestraTabs({
     [tabsRef, newTabInSpace, closeTab],
   );
 
-  return { openTask, closeTask };
+  // TUIs treat a single burst ending in CR as a paste, so Enter goes separately.
+  const sendTask = useCallback((paneId: number, text: string): boolean => {
+    if (!writeToSession(paneId, text)) return false;
+    setTimeout(() => writeToSession(paneId, "\r"), SUBMIT_DELAY_MS);
+    return true;
+  }, []);
+
+  return { openTask, closeTask, sendTask };
 }

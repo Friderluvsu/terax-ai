@@ -12,14 +12,16 @@ use serde_json::{json, Value};
 use tauri::{Emitter, Manager};
 use terax_control_protocol::{
     CallerContext, ControlDescriptor, ControlRequest, ControlResponse, FrontendRequest,
-    FrontendResponse, OpenParams, OrchestrateParams, RunStopParams, TaskCloseParams,
-    TaskCreateParams, TaskStopParams, FRONTEND_TASK_CLOSE, FRONTEND_TASK_OPEN, MAX_MESSAGE_BYTES,
-    METHODS, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING,
-    METHOD_RUN_STOP, METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_STOP, PROTOCOL_VERSION,
+    FrontendResponse, OpenParams, OrchestrateParams, PaneSendParams, RunStopParams,
+    TaskCloseParams, TaskCreateParams, TaskInfo, TaskSendParams, TaskStopParams, TaskWaitParams,
+    DEFAULT_WAIT_SECS, FRONTEND_TASK_CLOSE, FRONTEND_TASK_OPEN, FRONTEND_TASK_SEND,
+    MAX_MESSAGE_BYTES, MAX_WAIT_SECS, METHODS, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN,
+    METHOD_ORCHESTRATE, METHOD_PING, METHOD_RUN_STOP, METHOD_TASK_CREATE, METHOD_TASK_LIST,
+    METHOD_TASK_RESULT, METHOD_TASK_SEND, METHOD_TASK_STOP, METHOD_TASK_WAIT, PROTOCOL_VERSION,
     SERVER_RESPONSE_ID,
 };
 
-use crate::modules::orchestra::{Caller, Orchestra, OrchestraError, Stopped};
+use crate::modules::orchestra::{checks, Caller, Orchestra, OrchestraError, Stopped};
 use crate::modules::{fs, workspace};
 
 const CONTROL_EVENT: &str = "terax:control-request";
@@ -173,6 +175,10 @@ pub fn start(app: tauri::AppHandle, state: ControlState) -> Result<(), String> {
             if let Err(error) = state.0.orchestra.init(dir.join("orchestra")) {
                 log::warn!("orchestration disabled: {error}");
             }
+            let listener_app = app.clone();
+            state.0.orchestra.set_listener(move || {
+                let _ = listener_app.emit("terax:orchestra-changed", ());
+            });
         }
         Err(error) => log::warn!("orchestration disabled: {error}"),
     }
@@ -433,7 +439,7 @@ fn route_request(
             }
         }
         METHOD_ORCHESTRATE | METHOD_TASK_CREATE | METHOD_TASK_LIST | METHOD_TASK_STOP
-        | METHOD_RUN_STOP => {
+        | METHOD_TASK_WAIT | METHOD_TASK_RESULT | METHOD_TASK_SEND | METHOD_RUN_STOP => {
             let id = request.id.clone();
             match route_orchestra(request, caller, app, state) {
                 Ok(result) => ControlResponse::success(id, result),
@@ -460,22 +466,55 @@ fn route_orchestra(
         METHOD_ORCHESTRATE => {
             let params: OrchestrateParams = parse_params(request.params)?;
             let cwd = validate_orchestrate_cwd(&params.cwd, app)?;
-            let run = orchestra.orchestrate(caller, &cwd)?;
-            Ok(json!({ "run": run.id, "repo": run.repo, "base": run.base }))
+            let run = orchestra.orchestrate(caller, &cwd, params.check)?;
+            crate::modules::orchestra::skill::install();
+            Ok(json!({ "run": run.id, "repo": run.repo, "base": run.base, "check": run.check }))
         }
         METHOD_TASK_CREATE => {
             let params: TaskCreateParams = parse_params(request.params)?;
             let created = orchestra.create_task(caller, params)?;
             let id = created.task.id.clone();
+            close_panes(created.evicted, app, state);
             if created.start {
                 start_task(&id, app, state);
                 drain_queue(app, state);
             }
-            let tasks = orchestra.list(caller)?;
-            let task = tasks.into_iter().find(|task| task.id == id);
+            let task = orchestra
+                .list(caller)?
+                .into_iter()
+                .find(|task| task.id == id);
             Ok(json!({ "task": task }))
         }
         METHOD_TASK_LIST => Ok(json!({ "tasks": orchestra.list(caller)? })),
+        METHOD_TASK_WAIT => {
+            let params: TaskWaitParams = parse_params(request.params)?;
+            let secs = params
+                .timeout_secs
+                .unwrap_or(DEFAULT_WAIT_SECS)
+                .min(MAX_WAIT_SECS);
+            let tasks =
+                orchestra.wait(caller, params.task.as_deref(), Duration::from_secs(secs))?;
+            Ok(json!({ "tasks": tasks }))
+        }
+        METHOD_TASK_RESULT => {
+            let params: TaskStopParams = parse_params(request.params)?;
+            let result = orchestra.result(caller, &params.task)?;
+            Ok(json!({
+                "task": result.task,
+                "result": result.result,
+                "check_log": result.check_log,
+            }))
+        }
+        METHOD_TASK_SEND => {
+            let params: TaskSendParams = parse_params(request.params)?;
+            let pane_id = orchestra.send_target(caller, &params.task, &params.text)?;
+            let send = json!(PaneSendParams {
+                pane_id,
+                text: params.text,
+            });
+            ask_frontend(FRONTEND_TASK_SEND, send, app, state)?;
+            Ok(json!({ "sent": true }))
+        }
         METHOD_TASK_STOP => {
             let params: TaskStopParams = parse_params(request.params)?;
             let stopped = orchestra.stop_task(caller, &params.task)?;
@@ -488,6 +527,62 @@ fn route_orchestra(
         }
         _ => Err(("unknown_method", "unknown control method".to_string())),
     }
+}
+
+/// Feeds agent hook transitions from a pane's PTY into its task. Checks and
+/// queue promotion run off the PTY reader thread.
+pub fn agent_signal(app: &tauri::AppHandle, pane_id: u32, kind: &str) {
+    let Some(state) = app.try_state::<ControlState>() else {
+        return;
+    };
+    let state = state.inner().clone();
+    let effect = state.0.orchestra.agent_signal(pane_id, kind);
+    if effect.check.is_none() && !effect.promote {
+        return;
+    }
+    let app = app.clone();
+    let spawned = thread::Builder::new()
+        .name("terax-orchestra-task".into())
+        .spawn(move || {
+            if let Some(job) = effect.check {
+                let outcome = checks::run(&job);
+                state.0.orchestra.finish_check(&job.task, outcome);
+            }
+            drain_queue(&app, &state);
+        });
+    if let Err(error) = spawned {
+        log::warn!("could not start task follow-up: {error}");
+    }
+}
+
+#[tauri::command]
+pub fn orchestra_tasks(state: tauri::State<'_, ControlState>) -> Result<Vec<TaskInfo>, String> {
+    state
+        .0
+        .orchestra
+        .list(Caller::External)
+        .map_err(|(_, message)| message)
+}
+
+/// The human's stop from the Terax UI: one task, or every run when `task` is absent.
+#[tauri::command]
+pub async fn orchestra_stop(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ControlState>,
+    task: Option<String>,
+) -> Result<Value, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let orchestra = &state.0.orchestra;
+        let stopped = match task {
+            Some(task) => orchestra.stop_task(Caller::External, &task),
+            None => orchestra.stop_run(Caller::External, None),
+        }
+        .map_err(|(_, message)| message)?;
+        Ok(finish_stop(stopped, &app, &state))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn validate_orchestrate_cwd(cwd: &str, app: &tauri::AppHandle) -> Result<PathBuf, OrchestraError> {
@@ -540,13 +635,17 @@ fn start_task(task_id: &str, app: &tauri::AppHandle, state: &ControlState) {
     }
 }
 
-fn finish_stop(stopped: Stopped, app: &tauri::AppHandle, state: &ControlState) -> Value {
-    for pane_id in &stopped.panes {
-        let params = json!(TaskCloseParams { pane_id: *pane_id });
+fn close_panes(panes: impl IntoIterator<Item = u32>, app: &tauri::AppHandle, state: &ControlState) {
+    for pane_id in panes {
+        let params = json!(TaskCloseParams { pane_id });
         if let Err((_, error)) = ask_frontend(FRONTEND_TASK_CLOSE, params, app, state) {
             log::warn!("could not close worker pane {pane_id}: {error}");
         }
     }
+}
+
+fn finish_stop(stopped: Stopped, app: &tauri::AppHandle, state: &ControlState) -> Value {
+    close_panes(stopped.panes, app, state);
     let started = drain_queue(app, state);
     json!({ "stopped": stopped.tasks, "started": started })
 }
@@ -554,11 +653,12 @@ fn finish_stop(stopped: Stopped, app: &tauri::AppHandle, state: &ControlState) -
 fn drain_queue(app: &tauri::AppHandle, state: &ControlState) -> Vec<String> {
     let mut started = Vec::new();
     loop {
-        let promoted = state.0.orchestra.promote();
-        if promoted.is_empty() {
+        let promotion = state.0.orchestra.promote();
+        if promotion.started.is_empty() {
             return started;
         }
-        for task_id in promoted {
+        close_panes(promotion.evicted, app, state);
+        for task_id in promotion.started {
             start_task(&task_id, app, state);
             started.push(task_id);
         }

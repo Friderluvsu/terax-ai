@@ -308,6 +308,7 @@ pub fn spawn(
     let pair = pty_system.openpty(size).map_err(|e| e.to_string())?;
 
     let remote = matches!(workspace, WorkspaceEnv::Ssh { .. });
+    let pane_id = control.as_ref().map(|control| control.pane_id);
     let cmd = shell_init::build_command(cwd, workspace, blocks, shell, control, remote_pty)?;
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
@@ -390,7 +391,15 @@ pub fn spawn(
                             );
                         }
                         agent_detect.process(&buf[..n], |t| {
-                            let _ = app_reader.emit(AGENT_EVENT, t.into_signal(id));
+                            let signal = t.into_signal(id);
+                            if let Some(pane) = pane_id {
+                                crate::modules::control::agent_signal(
+                                    &app_reader,
+                                    pane,
+                                    signal.kind,
+                                );
+                            }
+                            let _ = app_reader.emit(AGENT_EVENT, signal);
                         });
                         filtered.clear();
                         da_filter.process(&buf[..n], &mut filtered, |reply| {
@@ -421,7 +430,11 @@ pub fn spawn(
                 }
             }
             agent_detect.finish(|t| {
-                let _ = app_reader.emit(AGENT_EVENT, t.into_signal(id));
+                let signal = t.into_signal(id);
+                if let Some(pane) = pane_id {
+                    crate::modules::control::agent_signal(&app_reader, pane, signal.kind);
+                }
+                let _ = app_reader.emit(AGENT_EVENT, signal);
             });
             output_r.finish_reading();
         })

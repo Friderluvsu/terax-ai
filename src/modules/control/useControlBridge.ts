@@ -1,6 +1,7 @@
 import {
   parseTaskClose,
   parseTaskOpen,
+  parseTaskSend,
   type TaskOpened,
   type TaskOpenRequest,
   TaskRequestError,
@@ -47,6 +48,7 @@ type UseControlBridgeOptions = {
   onOpen: (request: OpenRequest & { spaceId: string }) => number | null;
   onTaskOpen: (request: TaskOpenRequest) => TaskOpened;
   onTaskClose: (paneId: number) => boolean;
+  onTaskSend: (paneId: number, text: string) => boolean;
 };
 
 class RequestError extends Error {
@@ -113,6 +115,7 @@ export function useControlBridge({
   onOpen,
   onTaskOpen,
   onTaskClose,
+  onTaskSend,
 }: UseControlBridgeOptions): void {
   useEffect(() => {
     if (!ready) return;
@@ -177,6 +180,14 @@ export function useControlBridge({
           await respond(request.id, { ok: true, result: { closed } });
           return;
         }
+        if (request.method === "task.send") {
+          const send = parseTaskSend(request.params);
+          if (!onTaskSend(send.paneId, send.text)) {
+            throw new RequestError("pane_gone", "the worker pane is closed");
+          }
+          await respond(request.id, { ok: true, result: { sent: true } });
+          return;
+        }
         throw new RequestError(
           "unknown_method",
           `unsupported frontend method '${request.method}'`,
@@ -224,5 +235,6 @@ export function useControlBridge({
     onOpen,
     onTaskOpen,
     onTaskClose,
+    onTaskSend,
   ]);
 }
