@@ -88,12 +88,26 @@ const PROMPT_FLAG: Partial<Record<AgentLauncherId, string>> = {
   opencode: "--prompt",
 };
 
+function parentDir(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut > 0 ? path.slice(0, cut) : path;
+}
+
 export function workerLaunchCommand(
   request: TaskOpenRequest,
   command: string,
   windows?: boolean,
 ): string {
+  const parts = [command];
+  // The brief lives beside the worktree; without this Claude asks before reading it.
+  if (request.agent === "claude") {
+    parts.push(
+      "--add-dir",
+      quoteShellArg(parentDir(request.briefPath), windows),
+    );
+  }
   const flag = PROMPT_FLAG[request.agent];
-  const prompt = quoteShellArg(workerPrompt(request), windows);
-  return flag ? `${command} ${flag} ${prompt}` : `${command} ${prompt}`;
+  if (flag) parts.push(flag);
+  parts.push(quoteShellArg(workerPrompt(request), windows));
+  return parts.join(" ");
 }

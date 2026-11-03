@@ -56,10 +56,25 @@ describe("workerLaunchCommand", () => {
 
   it("passes the brief path as one quoted prompt argument", () => {
     const command = workerLaunchCommand(request, "claude", false);
-    expect(command.startsWith("claude '")).toBe(true);
+    expect(command.startsWith("claude --add-dir '/tmp/it'\\''s here' '")).toBe(
+      true,
+    );
     expect(command).toContain("/tmp/it'\\''s here/brief.md");
     expect(command).toContain("branch task/a1b2c3d4-1");
     expect(command).not.toContain("\n");
+  });
+
+  it("grants directory access only to Claude", () => {
+    expect(
+      workerLaunchCommand({ ...request, agent: "codex" }, "codex", false),
+    ).not.toContain("--add-dir");
+    expect(
+      workerLaunchCommand(
+        { ...request, briefPath: "C:\\data\\t-1\\brief.md" },
+        "claude",
+        true,
+      ),
+    ).toContain("--add-dir 'C:\\data\\t-1'");
   });
 
   it("uses the interactive prompt flag where the agent needs one", () => {
