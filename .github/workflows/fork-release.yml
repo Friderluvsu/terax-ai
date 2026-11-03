@@ -6,6 +6,10 @@ name: Fork release
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: macOS runner label (arm64 builds an Apple Silicon DMG)
+        type: string
+        default: macos-14
       run_checks:
         description: Run lint, types and tests before building
         type: boolean
@@ -23,7 +27,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner || 'macos-14' }}
     timeout-minutes: 90
     permissions:
       contents: write
