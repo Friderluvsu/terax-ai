@@ -36,7 +36,10 @@ const chatRuntime = vi.hoisted(() => {
 
 vi.mock("@/modules/ai/store/chatRuntime", () => chatRuntime);
 
-import { firePendingReviewForSession, maybeTriggerManagedReview } from "./review";
+import {
+  firePendingReviewForSession,
+  maybeTriggerManagedReview,
+} from "./review";
 
 function agent(partial: Partial<ManagedAgent>): ManagedAgent {
   return {

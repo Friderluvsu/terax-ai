@@ -45,14 +45,14 @@ describe("agent launch commands", () => {
       normalizeAgentLaunchCommands({
         claude: "cc",
         codex: "",
-        gemini: 42,
+        antigravity: 42,
         pi: "pi --provider local",
         unknown: "ignored",
       }),
     ).toEqual({
       claude: "cc",
       codex: "codex",
-      gemini: "gemini",
+      antigravity: "agy",
       pi: "pi --provider local",
       opencode: "opencode",
       grok: "grok",

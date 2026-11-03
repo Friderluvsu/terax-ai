@@ -19,7 +19,12 @@ describe("agent session store", () => {
     useAgentStore.getState().start(7, 3, "claude");
     const s = useAgentStore.getState().sessions[7];
 
-    expect(s).toMatchObject({ leafId: 7, tabId: 3, agent: "claude", status: "working" });
+    expect(s).toMatchObject({
+      leafId: 7,
+      tabId: 3,
+      agent: "claude",
+      status: "working",
+    });
     expect(s.attentionSince).toBeNull();
   });
 
@@ -54,9 +59,7 @@ describe("agent session store", () => {
     useAgentStore.getState().setLocalAgent({ agent: "pi", status: "working" });
     const before = useAgentStore.getState().localAgent;
 
-    useAgentStore
-      .getState()
-      .setLocalAgent({ agent: "pi", status: "working" });
+    useAgentStore.getState().setLocalAgent({ agent: "pi", status: "working" });
 
     expect(useAgentStore.getState().localAgent).toBe(before);
 
@@ -88,7 +91,9 @@ describe("agent session store", () => {
     useAgentStore.getState().markAllRead();
 
     expect(useAgentStore.getState().notifications).toBe(afterFirst);
-    expect(useAgentStore.getState().notifications.every((n) => n.read)).toBe(true);
+    expect(useAgentStore.getState().notifications.every((n) => n.read)).toBe(
+      true,
+    );
   });
 
   it("nextAttentionTarget returns the most recently waiting agent", () => {
@@ -108,7 +113,6 @@ describe("agent session store", () => {
 
     expect(nextAttentionTarget()).toEqual({ tabId: 10, leafId: 1 });
   });
-
 });
 
 function push(partial: { leafId: number; tabId: number }): void {

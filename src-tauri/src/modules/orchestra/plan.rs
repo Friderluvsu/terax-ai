@@ -7,7 +7,7 @@ use terax_control_protocol::{validate_brief, validate_title};
 
 use super::catalog::{self, AgentCatalog};
 
-pub const PLANNER_AGENTS: &[&str] = &["claude", "codex", "gemini"];
+pub const PLANNER_AGENTS: &[&str] = &["claude", "codex", "antigravity"];
 pub const MAX_JOB_BYTES: usize = 8 * 1024;
 const MAX_PLANNED_TASKS: usize = 8;
 const MAX_OUTPUT_BYTES: usize = 512 * 1024;
@@ -64,11 +64,11 @@ pub fn command(agent: &str, prompt: &str, last_message: &Path) -> Option<(String
             last_message.to_string_lossy().into_owned(),
             prompt,
         ],
-        // Non-interactive Gemini denies tools that need approval, so edits never run.
-        "gemini" => vec!["-p".into(), prompt],
+        // Plan mode edits nothing, and --print takes the prompt as its value.
+        "antigravity" => vec!["--mode".into(), "plan".into(), "--print".into(), prompt],
         _ => return None,
     };
-    Some((agent.to_string(), args))
+    Some((catalog::binary(agent).to_string(), args))
 }
 
 /// Pulls the task list out of a planner reply: the last JSON array in the
@@ -171,7 +171,7 @@ mod tests {
     use super::*;
 
     fn catalog() -> Vec<AgentCatalog> {
-        catalog::build(|agent| agent == "claude", None)
+        catalog::build(|agent| agent == "claude", None, Vec::new)
     }
 
     #[test]
@@ -208,6 +208,10 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--permission-mode", "plan"]));
         let (_, args) = command("codex", "p", out).unwrap();
         assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
+        let (bin, args) = command("antigravity", "p", out).unwrap();
+        assert_eq!(bin, "agy");
+        assert!(args.windows(2).any(|w| w == ["--mode", "plan"]));
+        assert_eq!(args[args.len() - 2], "--print");
         assert!(command("bash", "p", out).is_none());
         let text = prompt("do x", &catalog());
         assert!(text.ends_with("Job:\ndo x"));
@@ -219,7 +223,7 @@ mod tests {
         let reply = r#"[
             {"title": "a", "brief": "x", "agent": "claude", "model": "haiku"},
             {"title": "b", "brief": "x", "agent": "claude", "model": "gpt-9"},
-            {"title": "c", "brief": "x", "agent": "gemini", "model": "gemini-2.5-pro"},
+            {"title": "c", "brief": "x", "agent": "antigravity", "model": "claude-sonnet-4-6"},
             {"title": "d", "brief": "x"}
         ]"#;
         let tasks = parse(reply, &catalog()).unwrap();

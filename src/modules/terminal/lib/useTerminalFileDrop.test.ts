@@ -42,13 +42,10 @@ describe("createTerminalPathDropTarget", () => {
       setTarget,
     });
 
-    expect(
-      target.dropPath(["/repo/a.ts", "/repo/b file.ts"], 40, 50),
-    ).toBe(true);
-    expect(paste).toHaveBeenCalledWith(
-      11,
-      "/repo/a.ts '/repo/b file.ts' ",
+    expect(target.dropPath(["/repo/a.ts", "/repo/b file.ts"], 40, 50)).toBe(
+      true,
     );
+    expect(paste).toHaveBeenCalledWith(11, "/repo/a.ts '/repo/b file.ts' ");
   });
 
   it("clears stale state when a drop misses every terminal", () => {

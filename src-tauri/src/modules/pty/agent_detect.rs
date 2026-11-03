@@ -5,10 +5,10 @@ const ST_FINAL: u8 = b'\\';
 
 const OSC_MAX: usize = 2048;
 
-const DEFAULT_AGENTS: &[&str] = &["claude", "codex", "gemini", "pi", "opencode", "grok"];
+const DEFAULT_AGENTS: &[&str] = &["claude", "codex", "antigravity", "pi", "opencode", "grok"];
 
 // OSC 777 marker our agent hooks emit. Legacy 3-field `notify;Terax;<event>`
-// (Claude) or 4-field `notify;Terax;<agent>;<event>` (Codex/Gemini/Pi).
+// (Claude) or 4-field `notify;Terax;<agent>;<event>` (Codex/Antigravity/Pi).
 const TERAX_MARKER: &[u8] = b"notify;Terax;";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -248,6 +248,7 @@ impl AgentDetector {
                 continue;
             }
             let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
+            let base = if base == "agy" { "antigravity" } else { base };
             if let Some(agent) = self.agents.iter().find(|a| {
                 base.strip_prefix(a.as_str())
                     .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
@@ -284,6 +285,15 @@ mod tests {
     fn arms_on_agent_command() {
         let mut d = AgentDetector::new();
         assert_eq!(run(&mut d, &osc("133;C;claude -p hello")), vec![started("claude")]);
+    }
+
+    #[test]
+    fn arms_on_the_agy_command_as_antigravity() {
+        let mut d = AgentDetector::new();
+        assert_eq!(
+            run(&mut d, &osc("133;C;/Users/x/.local/bin/agy --mode plan")),
+            vec![started("antigravity")]
+        );
     }
 
     #[test]
@@ -362,8 +372,8 @@ mod tests {
         assert_eq!(run(&mut d, &osc("777;notify;Terax;codex;working")), vec![started("codex")]);
         let mut g = AgentDetector::new();
         assert_eq!(
-            run(&mut g, &osc("777;notify;Terax;gemini;finished")),
-            vec![started("gemini"), Transition::Finished]
+            run(&mut g, &osc("777;notify;Terax;antigravity;finished")),
+            vec![started("antigravity"), Transition::Finished]
         );
     }
 
@@ -394,10 +404,10 @@ mod tests {
     #[test]
     fn four_field_marker_drives_status_after_preexec() {
         let mut d = AgentDetector::new();
-        run(&mut d, &osc("133;C;gemini"));
-        assert_eq!(run(&mut d, &osc("777;notify;Terax;gemini;attention")), vec![Transition::Attention]);
-        assert_eq!(run(&mut d, &osc("777;notify;Terax;gemini;working")), vec![Transition::Working]);
-        assert_eq!(run(&mut d, &osc("777;notify;Terax;gemini;finished")), vec![Transition::Finished]);
+        run(&mut d, &osc("133;C;antigravity"));
+        assert_eq!(run(&mut d, &osc("777;notify;Terax;antigravity;attention")), vec![Transition::Attention]);
+        assert_eq!(run(&mut d, &osc("777;notify;Terax;antigravity;working")), vec![Transition::Working]);
+        assert_eq!(run(&mut d, &osc("777;notify;Terax;antigravity;finished")), vec![Transition::Finished]);
     }
 
     #[test]

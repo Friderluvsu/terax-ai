@@ -31,7 +31,7 @@ function PiIcon({ size, className }: { size: number; className?: string }) {
 function iconFor(agent: string): IconSvgElement {
   const a = agent.toLowerCase();
   if (a.includes("claude")) return ClaudeIcon;
-  if (a.includes("gemini")) return GoogleGeminiIcon;
+  if (a.includes("antigravity") || a === "agy") return GoogleGeminiIcon;
   if (a.includes("opencode")) return CodeIcon;
   if (a.includes("grok")) return Grok02Icon;
   if (a.includes("codex") || a.includes("gpt") || a.includes("openai"))

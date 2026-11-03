@@ -153,8 +153,8 @@ describe("workerLaunchCommand", () => {
 
   it("uses the interactive prompt flag where the agent needs one", () => {
     expect(
-      workerLaunchCommand({ ...request, agent: "gemini" }, "gemini", false),
-    ).toMatch(/^gemini -i '/);
+      workerLaunchCommand({ ...request, agent: "antigravity" }, "agy", false),
+    ).toMatch(/^agy --mode accept-edits --add-dir '\/tmp\/it'\\''s here' -i '/);
     expect(
       workerLaunchCommand({ ...request, agent: "opencode" }, "opencode", false),
     ).toMatch(/^opencode --prompt '/);

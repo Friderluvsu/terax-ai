@@ -14,9 +14,9 @@ export const AGENT_LAUNCHERS = [
     supportsHooks: true,
   },
   {
-    id: "gemini",
-    label: "Gemini",
-    defaultCommand: "gemini",
+    id: "antigravity",
+    label: "Antigravity",
+    defaultCommand: "agy",
     supportsHooks: true,
   },
   {

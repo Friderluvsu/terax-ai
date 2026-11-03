@@ -20,11 +20,11 @@ describe("drafts", () => {
     expect(second.model).toBeUndefined();
     expect(third).toMatchObject({ agent: "claude" });
     expect(third.model).toBeUndefined();
-    expect(newDraft("gemini", first)).toMatchObject({
+    expect(newDraft("antigravity", first)).toMatchObject({
       agent: "codex",
       model: "gpt-x",
     });
-    expect(newDraft("gemini", second).agent).toBe("gemini");
+    expect(newDraft("antigravity", second).agent).toBe("antigravity");
   });
 
   it("flags cards the backend would refuse", () => {
@@ -39,9 +39,9 @@ describe("drafts", () => {
   });
 
   it("sends trimmed fields and omits empty options", () => {
-    const draft = newDraft("gemini", { title: " ", brief: " fix it " });
+    const draft = newDraft("antigravity", { title: " ", brief: " fix it " });
     expect(createParams(draft)).toEqual({
-      agent: "gemini",
+      agent: "antigravity",
       brief: "fix it",
       title: null,
       model: null,

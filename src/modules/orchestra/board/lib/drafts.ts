@@ -3,7 +3,7 @@ import {
   type AgentLauncherId,
 } from "@/modules/agents/lib/launcher";
 
-export const PLANNERS = ["claude", "codex", "gemini"] as const;
+export const PLANNERS = ["claude", "codex", "antigravity"] as const;
 export type Planner = (typeof PLANNERS)[number];
 
 export type Draft = {

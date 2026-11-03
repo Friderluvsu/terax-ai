@@ -40,10 +40,12 @@ describe("tabAgentStatus", () => {
       state: "attention",
       agent: null,
     });
-    expect(tabAgentStatus({ 1: "working", 2: "finished" }, {}, [1, 2])).toEqual({
-      state: "working",
-      agent: null,
-    });
+    expect(tabAgentStatus({ 1: "working", 2: "finished" }, {}, [1, 2])).toEqual(
+      {
+        state: "working",
+        agent: null,
+      },
+    );
     expect(tabAgentStatus({ 1: "finished" }, {}, [1])).toEqual({
       state: "finished",
       agent: null,
@@ -60,9 +62,9 @@ describe("tabAgentStatus", () => {
 
   it("surfaces the acknowledged agent name for its icon", () => {
     const phases = { 7: "idle" } as const;
-    expect(tabAgentStatus(phases, { 7: "gemini" }, [7])).toEqual({
+    expect(tabAgentStatus(phases, { 7: "antigravity" }, [7])).toEqual({
       state: "idle",
-      agent: "gemini",
+      agent: "antigravity",
     });
   });
 
@@ -90,7 +92,7 @@ describe("useAgentActivityStore", () => {
   it("drops a pty's phase and agent on clear", () => {
     const { setPhase, setAgent, clear } = useAgentActivityStore.getState();
     setPhase(1, "attention");
-    setAgent(1, "gemini");
+    setAgent(1, "antigravity");
     clear(1);
     const state = useAgentActivityStore.getState();
     expect(1 in state.phases).toBe(false);
@@ -101,7 +103,7 @@ describe("useAgentActivityStore", () => {
     const { setPhase, setAgent, acknowledgeAttention } =
       useAgentActivityStore.getState();
     setPhase(1, "attention");
-    setAgent(1, "gemini");
+    setAgent(1, "antigravity");
     setPhase(2, "working");
     const agents = useAgentActivityStore.getState().agents;
 
@@ -113,7 +115,7 @@ describe("useAgentActivityStore", () => {
     expect(isAgentActivePty(1)).toBe(true);
     expect(tabAgentStatus(state.phases, state.agents, [1])).toEqual({
       state: "idle",
-      agent: "gemini",
+      agent: "antigravity",
     });
   });
 });

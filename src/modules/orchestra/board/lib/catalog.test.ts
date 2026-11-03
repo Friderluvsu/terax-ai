@@ -13,7 +13,7 @@ const catalog: AgentCatalog[] = [
     installed: true,
     models: [{ id: "haiku", label: "Haiku", note: "cheap" }],
   },
-  { agent: "gemini", installed: false, models: [] },
+  { agent: "antigravity", installed: false, models: [] },
 ];
 
 describe("agent catalog helpers", () => {
@@ -21,8 +21,8 @@ describe("agent catalog helpers", () => {
     expect(modelsFor(catalog, "claude").map((m) => m.id)).toEqual(["haiku"]);
     expect(modelsFor(catalog, "pi")).toEqual([]);
     expect(isInstalled(catalog, "claude")).toBe(true);
-    expect(isInstalled(catalog, "gemini")).toBe(false);
-    expect(isInstalled([], "gemini")).toBe(true);
+    expect(isInstalled(catalog, "antigravity")).toBe(false);
+    expect(isInstalled([], "antigravity")).toBe(true);
   });
 
   it("maps a stored model onto the select", () => {

@@ -131,14 +131,14 @@ function workerPrompt(request: TaskOpenRequest): string {
 }
 
 const PROMPT_FLAG: Partial<Record<AgentLauncherId, string>> = {
-  gemini: "-i",
+  antigravity: "-i",
   opencode: "--prompt",
 };
 
 const MODEL_FLAG: Partial<Record<AgentLauncherId, string>> = {
   claude: "--model",
   codex: "--model",
-  gemini: "-m",
+  antigravity: "--model",
 };
 
 function parentDir(path: string): string {
@@ -161,6 +161,14 @@ export function workerLaunchCommand(
     parts.push(
       "--permission-mode",
       "acceptEdits",
+      "--add-dir",
+      quoteShellArg(parentDir(request.briefPath), windows),
+    );
+  }
+  if (request.agent === "antigravity") {
+    parts.push(
+      "--mode",
+      "accept-edits",
       "--add-dir",
       quoteShellArg(parentDir(request.briefPath), windows),
     );

@@ -6,7 +6,7 @@ enum Delivery {
     // Claude returns the sequence via a `terminalSequence` JSON field (it lost
     // /dev/tty access in v2.1.139) and emits it in-band. Cross-platform.
     TerminalSequence,
-    // Codex/Gemini hooks can't write to the terminal, so the hook command emits
+    // Codex hooks can't write to the terminal, so the hook command emits
     // the marker itself: to /dev/tty on Unix, via a CONOUT$ helper on Windows.
     Osc,
 }
@@ -45,19 +45,14 @@ const AGENTS: &[AgentSpec] = &[
         matcher: false,
         delivery: Delivery::Osc,
     },
-    AgentSpec {
-        agent: "gemini",
-        dir: ".gemini",
-        file: "settings.json",
-        events: &[
-            ("BeforeAgent", "working"),
-            ("Notification", "attention"),
-            ("AfterAgent", "finished"),
-        ],
-        matcher: true,
-        delivery: Delivery::Osc,
-    },
 ];
+
+// Antigravity (`agy`) reads one hooks.json of named hooks with flat event
+// lists. Ours is a single named entry so the user's own hooks stay untouched.
+const AGY_HOOKS_DIR: &str = ".gemini/config";
+const AGY_HOOKS_FILE: &str = "hooks.json";
+const AGY_HOOK_NAME: &str = "terax-notifications";
+const AGY_EVENTS: [(&str, &str); 2] = [("PreInvocation", "working"), ("Stop", "finished")];
 
 const PI_EXTENSION_DIR: &str = ".pi/agent/extensions";
 const PI_EXTENSION_FILE: &str = "terax-notifications.ts";
@@ -107,7 +102,7 @@ fn hook_command(spec: &AgentSpec, event: &str) -> String {
     }
 }
 
-// Marker to the tty, then `{}` on stdout: Codex/Gemini require a JSON no-op.
+// Marker to the tty, then `{}` on stdout: Codex requires a JSON no-op.
 #[cfg(unix)]
 fn osc_command(agent: &str, event: &str) -> String {
     format!(
@@ -139,6 +134,51 @@ fn status_needle(spec: &AgentSpec, event: &str) -> String {
             }
         }
     }
+}
+
+fn osc_needle(agent: &str, event: &str) -> String {
+    #[cfg(unix)]
+    {
+        format!("notify;Terax;{agent};{event}")
+    }
+    #[cfg(windows)]
+    {
+        format!("__terax_notify {agent} {event}")
+    }
+}
+
+fn merge_agy_hooks(mut root: Value) -> Value {
+    if !root.is_object() {
+        root = json!({});
+    }
+    let mut entry = serde_json::Map::new();
+    for (event, marker) in AGY_EVENTS {
+        entry.insert(
+            event.to_string(),
+            json!([{ "type": "command", "command": osc_command("antigravity", marker) }]),
+        );
+    }
+    root[AGY_HOOK_NAME] = Value::Object(entry);
+    root
+}
+
+fn enable_agy_hooks_at(path: &std::path::Path) -> Result<(), String> {
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => existing_config(Some(&s), path)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let out =
+        serde_json::to_string_pretty(&merge_agy_hooks(existing)).map_err(|e| e.to_string())?;
+    write_atomic(path, &out)
+}
+
+fn agy_hooks_installed(contents: &str) -> bool {
+    AGY_EVENTS
+        .iter()
+        .all(|(_, marker)| contents.contains(&osc_needle("antigravity", marker)))
 }
 
 fn is_ours(group: &Value) -> bool {
@@ -195,7 +235,10 @@ fn merge_hooks(mut root: Value, spec: &AgentSpec) -> Value {
 fn existing_config(contents: Option<&str>, path: &std::path::Path) -> Result<Value, String> {
     match contents {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).map_err(|e| {
-            format!("{} is not valid JSON ({e}); refusing to overwrite", path.display())
+            format!(
+                "{} is not valid JSON ({e}); refusing to overwrite",
+                path.display()
+            )
         }),
         _ => Ok(json!({})),
     }
@@ -271,6 +314,9 @@ pub fn agent_enable_hooks(agent: String) -> Result<(), String> {
     if agent == "pi" {
         return enable_pi_extension();
     }
+    if agent == "antigravity" {
+        return enable_agy_hooks_at(&home_path(AGY_HOOKS_DIR, AGY_HOOKS_FILE)?);
+    }
     let spec = find(&agent)?;
     let path = settings_path(spec)?;
     let dir = path.parent().unwrap();
@@ -329,6 +375,12 @@ pub fn agent_hooks_status(agent: String) -> bool {
                     .all(|needle| content.contains(needle))
             });
     }
+    if agent == "antigravity" {
+        return home_path(AGY_HOOKS_DIR, AGY_HOOKS_FILE)
+            .ok()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .is_some_and(|content| agy_hooks_installed(&content));
+    }
     let Ok(spec) = find(&agent) else {
         return false;
     };
@@ -377,7 +429,7 @@ mod tests {
 
     #[test]
     fn is_idempotent_per_agent() {
-        for agent in ["claude", "codex", "gemini"] {
+        for agent in ["claude", "codex"] {
             let s = spec(agent);
             let once = merge_hooks(json!({}), s);
             let twice = merge_hooks(once.clone(), s);
@@ -389,8 +441,8 @@ mod tests {
     fn conout_marker_matches_detector_format() {
         // Exactly the bytes pty/agent_detect parses (ESC ] 777 ; ... BEL).
         assert_eq!(
-            conout_marker("gemini", "attention"),
-            "\u{1b}]777;notify;Terax;gemini;attention\u{7}"
+            conout_marker("antigravity", "attention"),
+            "\u{1b}]777;notify;Terax;antigravity;attention\u{7}"
         );
     }
 
@@ -411,11 +463,43 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn gemini_uses_matcher_and_named_marker() {
-        let out = merge_hooks(json!({}), spec("gemini"));
-        assert_eq!(out["hooks"]["BeforeAgent"][0]["matcher"], "*");
-        assert!(command(&out, "AfterAgent", 0).contains("notify;Terax;gemini;finished"));
-        assert!(command(&out, "Notification", 0).contains("notify;Terax;gemini;attention"));
+    fn antigravity_adds_one_named_hook_and_keeps_the_users_own() {
+        let mine = json!({ "lint": { "PostToolUse": [] }, "terax-notifications": "stale" });
+        let out = merge_agy_hooks(mine);
+        assert!(out["lint"].is_object());
+        let pre = out[AGY_HOOK_NAME]["PreInvocation"][0]["command"]
+            .as_str()
+            .unwrap();
+        let stop = out[AGY_HOOK_NAME]["Stop"][0]["command"].as_str().unwrap();
+        assert!(pre.contains("notify;Terax;antigravity;working"));
+        assert!(stop.contains("notify;Terax;antigravity;finished"));
+        assert!(stop.contains("> /dev/tty"));
+        assert_eq!(out[AGY_HOOK_NAME]["Stop"][0]["type"], "command");
+        assert_eq!(merge_agy_hooks(out.clone()), out);
+        assert!(agy_hooks_installed(&out.to_string()));
+        assert!(!agy_hooks_installed("{}"));
+        assert_eq!(
+            merge_agy_hooks(json!([1]))[AGY_HOOK_NAME]["Stop"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn antigravity_install_refuses_invalid_json_and_creates_the_file() {
+        let dir = std::env::temp_dir().join(format!("terax-agy-hooks-{}", std::process::id()));
+        let path = dir.join("config").join(AGY_HOOKS_FILE);
+        let _ = std::fs::remove_dir_all(&dir);
+        enable_agy_hooks_at(&path).unwrap();
+        assert!(agy_hooks_installed(
+            &std::fs::read_to_string(&path).unwrap()
+        ));
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(enable_agy_hooks_at(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
