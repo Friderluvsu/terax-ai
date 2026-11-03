@@ -1,8 +1,9 @@
 name: Fork release
 
 # Builds the fork as Terax.app (dev.terax.fork, ad-hoc signed) and packages the
-# DMG on a GitHub macOS runner. Run it from the Actions tab, or push a
-# `fork-v*` tag to also publish the DMG as a GitHub release.
+# DMG on a GitHub macOS runner and publishes it as a GitHub prerelease
+# (fork-v<version>). Run it from the Actions tab, or push a `fork-v*` tag.
+# No workflow artifacts are kept.
 on:
   workflow_dispatch:
     inputs:
@@ -89,22 +90,27 @@ jobs:
           ln -s /Applications "$stage/Applications"
           hdiutil create -quiet -volname "Terax" -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.package.outputs.dmg }}
-          path: ${{ steps.package.outputs.dmg }}
-          if-no-files-found: error
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/fork-v')
         env:
           GH_TOKEN: ${{ github.token }}
           DMG: ${{ steps.package.outputs.dmg }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: |
-          gh release create "$TAG" "$DMG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$TAG" \
-            --generate-notes \
-            --prerelease
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/fork-v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="fork-v$VERSION"
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$DMG" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$DMG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$tag" \
+              --generate-notes \
+              --prerelease
+          fi
