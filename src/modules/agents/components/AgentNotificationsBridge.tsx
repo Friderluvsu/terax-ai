@@ -1,7 +1,13 @@
 import { ORCHESTRA_SPACE_ID } from "@/modules/orchestra/lib/space";
 import type { Tab } from "@/modules/tabs";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { hasLeaf, leafIdForPty, onLongCommand } from "@/modules/terminal";
+import { isSupervised } from "@/modules/orchestra/lib/supervised";
+import {
+  hasLeaf,
+  leafIdForPty,
+  leafIds,
+  onLongCommand,
+} from "@/modules/terminal";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import { displayAgent } from "../lib/format";
@@ -77,7 +83,15 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
     case "attention": {
       store.setStatus(leafId, "waiting");
       const session = store.sessions[leafId];
-      if (session) route(session, "attention", ctx);
+      // A supervisor answers its board workers; only the Console reaches you.
+      const answered = ctx.tabs.some(
+        (t) =>
+          t.id === session?.tabId &&
+          t.kind === "terminal" &&
+          isSupervised(t.board?.run) &&
+          leafIds(t.paneTree)[0] !== leafId,
+      );
+      if (session && !answered) route(session, "attention", ctx);
       return;
     }
     case "finished": {

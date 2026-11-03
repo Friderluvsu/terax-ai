@@ -4,13 +4,17 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { BoardTask } from "../lib/board";
 import { useOrchestraTasks } from "../lib/useOrchestraTasks";
 import {
+  DEFAULT_GRID,
   fitView,
+  type Grid,
   moveRect,
   placeTile,
   type Rect,
-  resizeRect,
+  resizeGrid,
   type Size,
+  tileSize,
   toScreen,
+  type View,
   zoomAt,
 } from "./lib/canvas";
 import { PlannerBar } from "./PlannerBar";
@@ -26,7 +30,16 @@ type Props = {
   activeLeafId: number;
   renderLeaf: (leafId: number, visible: boolean) => ReactNode;
   onResizing: (token: object, active: boolean) => void;
+  useLeafCell: (leafId: number) => Cell | null;
+  setLeafFontScale: (leafId: number, scale: number) => void;
+  writeToLeaf: (leafId: number, text: string) => boolean;
+  whenLeafReady: (leafId: number) => Promise<void>;
 };
+
+type Cell = { width: number; height: number; fontSize: number };
+
+const FALLBACK_CELL = { width: 8, height: 17 };
+const ZOOM_SETTLE_MS = 350;
 
 const ZOOM_STEP = 1.15;
 
@@ -65,7 +78,8 @@ function drag(
 }
 
 export default function BoardView(props: Props) {
-  const { run, cwd, activeLeafId, renderLeaf, onResizing } = props;
+  const { run, cwd, activeLeafId, renderLeaf, onResizing, setLeafFontScale } =
+    props;
   const leafKey = props.leaves.join(",");
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by content
   const leaves = useMemo(() => props.leaves, [leafKey]);
@@ -100,16 +114,41 @@ export default function BoardView(props: Props) {
   useEffect(() => {
     update(run, (b) => {
       const kept: Record<number, Rect> = {};
+      const grids: Record<number, Grid> = {};
       let changed = false;
       for (const id of leaves) {
         const rect = b.rects[id] ?? placeTile(Object.values(kept));
-        if (!b.rects[id]) changed = true;
+        if (!b.rects[id] || !b.grids[id]) changed = true;
         kept[id] = rect;
+        grids[id] = b.grids[id] ?? DEFAULT_GRID;
       }
       if (Object.keys(b.rects).length !== leaves.length) changed = true;
-      return changed ? { rects: kept } : {};
+      return changed ? { rects: kept, grids } : {};
     });
   }, [run, leaves, update]);
+
+  // Zoom scales every terminal's font and keeps its rows and columns, so text
+  // never reflows; the resize interaction holds PTY resizes until the new
+  // cell size has been applied to the tile.
+  const zoom = board.view.zoom;
+  const appliedZoom = useRef(zoom);
+  const zoomToken = useRef({});
+  useEffect(() => {
+    const token = zoomToken.current;
+    for (const id of leaves) setLeafFontScale(id, zoom);
+    if (appliedZoom.current === zoom) return;
+    appliedZoom.current = zoom;
+    onResizing(token, true);
+    const timer = window.setTimeout(
+      () => onResizing(token, false),
+      ZOOM_SETTLE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [zoom, leaves, onResizing, setLeafFontScale]);
+  useEffect(() => {
+    const token = zoomToken.current;
+    return () => onResizing(token, false);
+  }, [onResizing]);
 
   const viewRef = useRef(board.view);
   viewRef.current = board.view;
@@ -172,21 +211,32 @@ export default function BoardView(props: Props) {
     );
   };
 
-  const resizeStart = (leafId: number, event: React.PointerEvent) => {
-    const origin = board.rects[leafId];
-    if (!origin) return;
-    const zoom = board.view.zoom;
+  const resizeStart = (
+    leafId: number,
+    event: React.PointerEvent,
+    grid: Grid,
+    cell: { width: number; height: number },
+  ) => {
     const token = {};
     onResizing(token, true);
     drag(
       event,
       (dx, dy) =>
         update(run, (b) => ({
-          rects: { ...b.rects, [leafId]: resizeRect(origin, dx, dy, zoom) },
+          grids: { ...b.grids, [leafId]: resizeGrid(grid, dx, dy, cell) },
         })),
       () => onResizing(token, false),
     );
   };
+
+  const setWorldSize = (leafId: number, w: number, h: number) =>
+    update(run, (b) => {
+      const rect = b.rects[leafId];
+      if (!rect || (Math.abs(rect.w - w) < 1 && Math.abs(rect.h - h) < 1)) {
+        return {};
+      }
+      return { rects: { ...b.rects, [leafId]: { ...rect, w, h } } };
+    });
 
   const offCanvas = runTasks.filter(
     (task) => task.pane_id === undefined || !leaves.includes(task.pane_id),
@@ -195,7 +245,13 @@ export default function BoardView(props: Props) {
 
   return (
     <div className="flex h-full w-full flex-col bg-background">
-      <PlannerBar run={run} cwd={cwd} />
+      <PlannerBar
+        run={run}
+        cwd={cwd}
+        consoleLeaf={consoleLeaf}
+        writeToLeaf={props.writeToLeaf}
+        whenLeafReady={props.whenLeafReady}
+      />
       <div
         ref={canvasRef}
         onPointerDown={panStart}
@@ -209,41 +265,27 @@ export default function BoardView(props: Props) {
       >
         {leaves.map((leafId) => {
           const rect = board.rects[leafId];
-          if (!rect) return null;
-          const screen = toScreen(rect, board.view);
-          const focused = leafId === activeLeafId;
-          const task = taskByLeaf.get(leafId);
+          const grid = board.grids[leafId];
+          if (!rect || !grid) return null;
           return (
-            <div
+            <BoardTile
               key={leafId}
-              data-board-tile={leafId}
-              className={
-                focused
-                  ? "absolute flex cursor-default flex-col overflow-hidden rounded-lg border border-ring/60 bg-card shadow-md"
-                  : "absolute flex cursor-default flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm"
-              }
-              style={{
-                left: screen.x,
-                top: screen.y,
-                width: screen.w,
-                height: screen.h,
-              }}
-            >
-              <TileHeader
-                task={task}
-                isConsole={leafId === consoleLeaf}
-                cwd={cwd}
-                onPointerDown={(event) => moveStart(leafId, event)}
-              />
-              <div data-board-tile-body className="relative min-h-0 flex-1">
-                {renderLeaf(leafId, intersects(screen, viewport))}
-              </div>
-              <div
-                aria-hidden
-                onPointerDown={(event) => resizeStart(leafId, event)}
-                className="absolute right-0 bottom-0 z-10 size-3 cursor-nwse-resize"
-              />
-            </div>
+              leafId={leafId}
+              rect={rect}
+              grid={grid}
+              view={board.view}
+              viewport={viewport}
+              focused={leafId === activeLeafId}
+              task={taskByLeaf.get(leafId)}
+              isConsole={leafId === consoleLeaf}
+              supervised={board.supervising}
+              cwd={cwd}
+              useLeafCell={props.useLeafCell}
+              renderLeaf={renderLeaf}
+              onMoveStart={moveStart}
+              onResizeStart={resizeStart}
+              onWorldSize={setWorldSize}
+            />
           );
         })}
 
@@ -311,5 +353,73 @@ function ZoomButton({
     >
       <HugeiconsIcon icon={icon} size={13} strokeWidth={1.75} />
     </button>
+  );
+}
+
+type TileProps = {
+  leafId: number;
+  rect: Rect;
+  grid: Grid;
+  view: View;
+  viewport: Size;
+  focused: boolean;
+  task: BoardTask | undefined;
+  isConsole: boolean;
+  supervised: boolean;
+  cwd: string;
+  useLeafCell: (leafId: number) => Cell | null;
+  renderLeaf: (leafId: number, visible: boolean) => ReactNode;
+  onMoveStart: (leafId: number, event: React.PointerEvent) => void;
+  onResizeStart: (
+    leafId: number,
+    event: React.PointerEvent,
+    grid: Grid,
+    cell: { width: number; height: number },
+  ) => void;
+  onWorldSize: (leafId: number, w: number, h: number) => void;
+};
+
+/** A tile is `cols x rows` cells of its terminal's current font, so its size
+ *  follows the font and the text never reflows. */
+function BoardTile(props: TileProps) {
+  const { leafId, rect, grid, view, viewport, focused, onWorldSize } = props;
+  const measured = props.useLeafCell(leafId);
+  const cell = measured ?? FALLBACK_CELL;
+  const { w: width, h: height } = tileSize(grid, cell);
+
+  useEffect(() => {
+    onWorldSize(leafId, width / view.zoom, height / view.zoom);
+  }, [leafId, width, height, view.zoom, onWorldSize]);
+
+  const origin = toScreen(rect, view);
+  const screen = { x: origin.x, y: origin.y, w: width, h: height };
+  return (
+    <div
+      data-board-tile={leafId}
+      className={
+        focused
+          ? "absolute flex cursor-default flex-col overflow-hidden rounded-lg border border-ring/60 bg-card shadow-md"
+          : "absolute flex cursor-default flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm"
+      }
+      style={{ left: screen.x, top: screen.y, width, height }}
+    >
+      <TileHeader
+        task={props.task}
+        isConsole={props.isConsole}
+        supervised={props.supervised}
+        cwd={props.cwd}
+        onPointerDown={(event) => props.onMoveStart(leafId, event)}
+      />
+      <div data-board-tile-body className="relative min-h-0 flex-1">
+        {props.renderLeaf(leafId, intersects(screen, viewport))}
+      </div>
+      <div
+        aria-hidden
+        onPointerDown={(event) =>
+          props.onResizeStart(leafId, event, grid, cell)
+        }
+        className="absolute right-0 bottom-0 z-10 size-3 cursor-nwse-resize"
+      />
+    </div>
   );
 }

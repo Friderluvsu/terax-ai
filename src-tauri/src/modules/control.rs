@@ -12,17 +12,19 @@ use serde_json::{json, Value};
 use tauri::{Emitter, Manager};
 use terax_control_protocol::{
     CallerContext, ControlDescriptor, ControlRequest, ControlResponse, FrontendRequest,
-    FrontendResponse, OpenParams, OrchestrateParams, PaneSendParams, RunStopParams,
-    TaskCloseParams, TaskCreateParams, TaskInfo, TaskSendParams, TaskStopParams, TaskWaitParams,
-    DEFAULT_WAIT_SECS, FRONTEND_TASK_CLOSE, FRONTEND_TASK_OPEN, FRONTEND_TASK_SEND,
-    MAX_MESSAGE_BYTES, MAX_WAIT_SECS, METHODS, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN,
-    METHOD_ORCHESTRATE, METHOD_PING, METHOD_RUN_STOP, METHOD_TASK_CREATE, METHOD_TASK_LIST,
-    METHOD_TASK_RESULT, METHOD_TASK_SEND, METHOD_TASK_STOP, METHOD_TASK_WAIT, PROTOCOL_VERSION,
+    FrontendResponse, OpenParams, OrchestrateParams, PaneScreenParams, PaneSendParams,
+    RunStopParams, TaskCloseParams, TaskCreateParams, TaskInfo, TaskMergeParams, TaskScreenParams,
+    TaskSendParams, TaskStopParams, TaskWaitParams, DEFAULT_SCREEN_LINES, DEFAULT_WAIT_SECS,
+    FRONTEND_TASK_CLOSE, FRONTEND_TASK_OPEN, FRONTEND_TASK_SCREEN, FRONTEND_TASK_SEND,
+    MAX_MESSAGE_BYTES, MAX_SCREEN_LINES, MAX_WAIT_SECS, METHODS, METHOD_CAPABILITIES,
+    METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING, METHOD_RUN_STOP,
+    METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_MERGE, METHOD_TASK_RESULT,
+    METHOD_TASK_SCREEN, METHOD_TASK_SEND, METHOD_TASK_STOP, METHOD_TASK_WAIT, PROTOCOL_VERSION,
     SERVER_RESPONSE_ID,
 };
 
 use crate::modules::orchestra::{
-    catalog, checks, plan, worktree, Caller, Created, Orchestra, OrchestraError, Stopped,
+    catalog, checks, plan, supervisor, worktree, Caller, Created, Orchestra, OrchestraError, Stopped,
 };
 use crate::modules::{fs, workspace};
 
@@ -85,6 +87,12 @@ pub struct ShellControlEnv {
 }
 
 impl ControlState {
+    /// The `terax` CLI binary shells get as `$TERAX_CLI`.
+    fn cli_path(&self) -> Option<String> {
+        let runtime = self.0.runtime.get()?;
+        runtime.cli_path.as_ref().map(fs::to_canon)
+    }
+
     /// Each shell gets its own token, so a request proves which pane sent it
     /// and the pane id in the request body is never trusted.
     pub fn shell_env(&self, pane_id: u32, cwd: Option<&Path>) -> Option<ShellControlEnv> {
@@ -357,6 +365,21 @@ fn read_request(reader: &mut impl BufRead) -> Result<ControlRequest, ReadRequest
     })
 }
 
+/// Every control method routed to `route_orchestra`. A method missing here is
+/// refused as unknown, so a test checks it against the protocol's list.
+const ORCHESTRA_METHODS: &[&str] = &[
+    METHOD_ORCHESTRATE,
+    METHOD_TASK_CREATE,
+    METHOD_TASK_LIST,
+    METHOD_TASK_STOP,
+    METHOD_TASK_WAIT,
+    METHOD_TASK_RESULT,
+    METHOD_TASK_SEND,
+    METHOD_TASK_SCREEN,
+    METHOD_TASK_MERGE,
+    METHOD_RUN_STOP,
+];
+
 fn route_request(
     mut request: ControlRequest,
     app: &tauri::AppHandle,
@@ -440,8 +463,7 @@ fn route_request(
                 Err((code, message)) => ControlResponse::failure(request.id, code, message),
             }
         }
-        METHOD_ORCHESTRATE | METHOD_TASK_CREATE | METHOD_TASK_LIST | METHOD_TASK_STOP
-        | METHOD_TASK_WAIT | METHOD_TASK_RESULT | METHOD_TASK_SEND | METHOD_RUN_STOP => {
+        method if ORCHESTRA_METHODS.contains(&method) => {
             let id = request.id.clone();
             match route_orchestra(request, caller, app, state) {
                 Ok(result) => ControlResponse::success(id, result),
@@ -510,6 +532,22 @@ fn route_orchestra(
             });
             ask_frontend(FRONTEND_TASK_SEND, send, app, state)?;
             Ok(json!({ "sent": true }))
+        }
+        METHOD_TASK_SCREEN => {
+            let params: TaskScreenParams = parse_params(request.params)?;
+            let pane_id = orchestra.screen_target(caller, &params.task)?;
+            let lines = params
+                .lines
+                .unwrap_or(DEFAULT_SCREEN_LINES)
+                .clamp(1, MAX_SCREEN_LINES);
+            let ask = json!(PaneScreenParams { pane_id, lines });
+            let screen = ask_frontend(FRONTEND_TASK_SCREEN, ask, app, state)?;
+            Ok(json!({ "task": params.task, "screen": screen.get("text") }))
+        }
+        METHOD_TASK_MERGE => {
+            let params: TaskMergeParams = parse_params(request.params)?;
+            let report = orchestra.merge(caller, params)?;
+            serde_json::to_value(report).map_err(|e| ("internal_error", e.to_string()))
         }
         METHOD_TASK_STOP => {
             let params: TaskStopParams = parse_params(request.params)?;
@@ -627,6 +665,53 @@ pub async fn orchestra_plan(
         let cwd = validate_orchestrate_cwd(&cwd, &app)?;
         let repo = worktree::repo_toplevel(&cwd).map_err(|error| ("not_a_repository", error))?;
         plan::run(&agent, &job, &repo).map_err(|error| ("plan_failed", error))
+    })
+    .await
+}
+
+/// Makes the board's Console pane the supervisor of a run and writes the
+/// files its agent is launched with.
+#[tauri::command]
+pub async fn orchestra_supervise(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ControlState>,
+    run: String,
+    pane_id: u32,
+    job: String,
+) -> Result<Value, String> {
+    let state = state.inner().clone();
+    blocking(move || {
+        if job.len() > plan::MAX_JOB_BYTES {
+            return Err(("invalid_params", "the job text is too long".to_string()));
+        }
+        let supervision = state.0.orchestra.supervise(&run, pane_id)?;
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| ("internal_error", e.to_string()))?
+            .join("orchestra")
+            .join(&supervision.run)
+            .join("supervisor");
+        let cli = state.cli_path().ok_or_else(|| {
+            (
+                "orchestra_unavailable",
+                "the terax command is not available in this build".to_string(),
+            )
+        })?;
+        let files = supervisor::prepare(
+            &dir,
+            &supervision.integration.join("worktree"),
+            &job,
+            &supervision.run,
+            &cli,
+        )
+        .map_err(|e| ("internal_error", e))?;
+        Ok(json!({
+            "guide_path": files.guide,
+            "settings_path": files.settings,
+            "job_path": files.job,
+            "integration_path": supervision.integration.join("worktree"),
+        }))
     })
     .await
 }
@@ -1188,6 +1273,17 @@ fn remove_launcher_dir(bin_dir: &Path) {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn every_orchestration_method_is_routed() {
+        let simple = [METHOD_PING, METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN];
+        for method in METHODS {
+            assert!(
+                simple.contains(method) || ORCHESTRA_METHODS.contains(method),
+                "{method} would be rejected as an unknown method"
+            );
+        }
+    }
 
     #[test]
     fn control_dir_is_isolated_per_identifier() {

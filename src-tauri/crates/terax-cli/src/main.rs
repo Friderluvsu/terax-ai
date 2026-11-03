@@ -11,16 +11,18 @@ use serde_json::{json, Value};
 use terax_control_protocol::{
     validate_brief, validate_check_command, validate_model, validate_send_text, validate_title,
     CallerContext, ControlDescriptor, ControlRequest, ControlResponse, OpenParams, TaskInfo,
-    DEFAULT_WAIT_SECS, MAX_BRIEF_BYTES, MAX_MESSAGE_BYTES, MAX_WAIT_SECS, METHOD_CAPABILITIES,
-    METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING, METHOD_RUN_STOP,
-    METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_RESULT, METHOD_TASK_SEND, METHOD_TASK_STOP,
-    METHOD_TASK_WAIT, PROTOCOL_VERSION, SERVER_RESPONSE_ID, TASK_AGENTS,
+    DEFAULT_WAIT_SECS, MAX_BRIEF_BYTES, MAX_MESSAGE_BYTES, MAX_SCREEN_LINES, MAX_WAIT_SECS,
+    METHOD_CAPABILITIES, METHOD_IDENTIFY, METHOD_OPEN, METHOD_ORCHESTRATE, METHOD_PING,
+    METHOD_RUN_STOP, METHOD_TASK_CREATE, METHOD_TASK_LIST, METHOD_TASK_MERGE, METHOD_TASK_RESULT,
+    METHOD_TASK_SCREEN, METHOD_TASK_SEND, METHOD_TASK_STOP, METHOD_TASK_WAIT, PROTOCOL_VERSION,
+    SERVER_RESPONSE_ID, TASK_AGENTS,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const IO_TIMEOUT: Duration = Duration::from_secs(7);
 // Starting a task creates a git worktree and may promote queued tasks.
 const ORCHESTRA_TIMEOUT: Duration = Duration::from_secs(300);
+const MERGE_TIMEOUT: Duration = Duration::from_secs(35 * 60);
 const EXIT_USAGE: u8 = 2;
 const EXIT_UNAVAILABLE: u8 = 3;
 const EXIT_PROTOCOL: u8 = 4;
@@ -274,6 +276,8 @@ fn response_timeout(method: &str, params: &Value) -> Duration {
         METHOD_ORCHESTRATE | METHOD_TASK_CREATE | METHOD_TASK_STOP | METHOD_RUN_STOP => {
             ORCHESTRA_TIMEOUT
         }
+        // A merge may also run the run's check command, which can take long.
+        METHOD_TASK_MERGE => MERGE_TIMEOUT,
         METHOD_TASK_WAIT => {
             let secs = params
                 .get("timeout_secs")
@@ -346,6 +350,63 @@ fn parse_task_wait(args: Vec<OsString>) -> Result<Action, CliError> {
     })
 }
 
+fn parse_task_screen(args: Vec<OsString>) -> Result<Action, CliError> {
+    let usage = || usage_error("task screen accepts <task> [--lines <n>]");
+    let mut params = json!({});
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].to_str() {
+            Some("--lines") => {
+                let lines = args
+                    .get(index + 1)
+                    .and_then(|value| value.to_str())
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .filter(|lines| (1..=MAX_SCREEN_LINES).contains(lines))
+                    .ok_or_else(|| {
+                        usage_error(format!("--lines requires 1..={MAX_SCREEN_LINES}"))
+                    })?;
+                params["lines"] = json!(lines);
+                index += 2;
+            }
+            Some(task) if !task.starts_with('-') && params.get("task").is_none() => {
+                params["task"] = json!(task);
+                index += 1;
+            }
+            _ => return Err(usage()),
+        }
+    }
+    if params.get("task").is_none() {
+        return Err(usage());
+    }
+    Ok(Action::Request {
+        method: METHOD_TASK_SCREEN,
+        params,
+    })
+}
+
+fn parse_task_merge(args: Vec<OsString>) -> Result<Action, CliError> {
+    let usage = || usage_error("task merge accepts [<task>] [--continue | --abort] [--check]");
+    let mut params = json!({});
+    for arg in &args {
+        match arg.to_str() {
+            Some("--continue") => params["continue"] = json!(true),
+            Some("--abort") => params["abort"] = json!(true),
+            Some("--check") => params["check"] = json!(true),
+            Some(task) if !task.starts_with('-') && params.get("task").is_none() => {
+                params["task"] = json!(task);
+            }
+            _ => return Err(usage()),
+        }
+    }
+    if params.get("continue") == Some(&json!(true)) && params.get("abort") == Some(&json!(true)) {
+        return Err(usage());
+    }
+    Ok(Action::Request {
+        method: METHOD_TASK_MERGE,
+        params,
+    })
+}
+
 fn parse_task_send(args: Vec<OsString>) -> Result<Action, CliError> {
     let [task, words @ ..] = args.as_slice() else {
         return Err(usage_error("task send requires a task id and text"));
@@ -365,7 +426,7 @@ fn parse_task_send(args: Vec<OsString>) -> Result<Action, CliError> {
 fn parse_task(mut args: Vec<OsString>) -> Result<Action, CliError> {
     if args.is_empty() {
         return Err(usage_error(
-            "task requires a subcommand: create, list, wait, result, send or stop",
+            "task requires a subcommand: create, list, wait, result, send, screen, merge or stop",
         ));
     }
     let sub = args.remove(0);
@@ -374,6 +435,8 @@ fn parse_task(mut args: Vec<OsString>) -> Result<Action, CliError> {
         Some("list") => request_without_params(args, METHOD_TASK_LIST),
         Some("wait") => parse_task_wait(args),
         Some("send") => parse_task_send(args),
+        Some("screen") => parse_task_screen(args),
+        Some("merge") => parse_task_merge(args),
         Some(sub @ ("stop" | "result")) => match args.as_slice() {
             [task] => Ok(Action::Request {
                 method: if sub == "stop" {
@@ -388,7 +451,7 @@ fn parse_task(mut args: Vec<OsString>) -> Result<Action, CliError> {
             ))),
         },
         _ => Err(usage_error(
-            "unknown task subcommand; use create, list, wait, result, send or stop",
+            "unknown task subcommand; use create, list, wait, result, send, screen, merge or stop",
         )),
     }
 }
@@ -802,6 +865,11 @@ fn print_result(method: &str, result: Value, as_json: bool) {
             }
         }
         METHOD_TASK_SEND => println!("Sent"),
+        METHOD_TASK_SCREEN => match result.get("screen").and_then(Value::as_str) {
+            Some(text) => println!("{}", text.trim_end()),
+            None => println!("The worker terminal shows nothing"),
+        },
+        METHOD_TASK_MERGE => print_merge(&result),
         METHOD_TASK_LIST => {
             let tasks: Vec<TaskInfo> = result
                 .get("tasks")
@@ -838,6 +906,73 @@ fn print_result(method: &str, result: Value, as_json: bool) {
     }
 }
 
+fn print_merge(result: &Value) {
+    let text = |key: &str| result.get(key).and_then(Value::as_str).unwrap_or_default();
+    let ids = |key: &str| {
+        result
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default()
+    };
+    println!("Integration branch: {}", text("branch"));
+    println!("Integration worktree: {}", text("worktree"));
+    if result.get("aborted") == Some(&json!(true)) {
+        println!("Aborted the open merge");
+    }
+    if result.get("continued") == Some(&json!(true)) {
+        println!("Committed the resolved merge");
+    }
+    for (label, key) in [
+        ("Merged", "merged"),
+        ("Already merged", "already"),
+        ("Waiting (not finished)", "waiting"),
+    ] {
+        let list = ids(key);
+        if !list.is_empty() {
+            println!("{label}: {list}");
+        }
+    }
+    for skip in result
+        .get("skipped")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let task = skip.get("task").and_then(Value::as_str).unwrap_or("?");
+        let reason = skip.get("reason").and_then(Value::as_str).unwrap_or("");
+        println!("Skipped {task}: {reason}");
+    }
+    if let Some(conflict) = result.get("conflict").filter(|c| !c.is_null()) {
+        let task = conflict
+            .get("task")
+            .and_then(Value::as_str)
+            .unwrap_or("an earlier task");
+        println!("CONFLICT while merging {task} in:");
+        for file in conflict
+            .get("files")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            println!("  {}", file.as_str().unwrap_or(""));
+        }
+        println!("Resolve the files in the integration worktree, then run: task merge --continue");
+    }
+    if let Some(check) = result.get("check").filter(|c| !c.is_null()) {
+        let passed = check.get("passed") == Some(&json!(true));
+        println!("Check: {}", if passed { "passed" } else { "FAILED" });
+        if let Some(log) = check.get("log").and_then(Value::as_str) {
+            println!("{}", log.trim_end());
+        }
+    }
+}
+
 fn print_task(task: &TaskInfo) {
     let status = serde_json::to_value(task.status)
         .ok()
@@ -868,7 +1003,7 @@ fn print_help() {
     println!(
         "Terax command line interface\n\n\
 Usage:\n  terax <file> [--line <n>] [--no-focus] [--json]\n  terax open <file> [--line <n>] [--no-focus] [--json]\n  terax ping [--json]\n  terax capabilities [--json]\n  terax identify [--json]\n  terax --version\n\n\
-Orchestration:\n  terax orchestrate [--check <cmd>]  make this pane the orchestrator; <cmd> runs in each finished worktree\n  terax task create --brief <file|-> [--agent claude] [--title <text>] [--model <name>]\n  terax task list\n  terax task wait [<task>] [--timeout <secs>]   block until a task finishes or needs input\n  terax task result <task>          print the worker's result.md and check log\n  terax task send <task> <text>     type a follow-up into the worker\n  terax task stop <task>\n  terax run stop [<run>]\n\n\
+Orchestration:\n  terax orchestrate [--check <cmd>]  make this pane the orchestrator; <cmd> runs in each finished worktree\n  terax task create --brief <file|-> [--agent claude] [--title <text>] [--model <name>]\n  terax task list\n  terax task wait [<task>] [--timeout <secs>]   block until a task finishes or needs input\n  terax task result <task>          print the worker's result.md and check log\n  terax task send <task> <text>     type a follow-up into the worker\n  terax task screen <task> [--lines <n>]   read what the worker terminal shows\n  terax task merge [<task>] [--continue|--abort] [--check]   merge finished tasks into one branch\n  terax task stop <task>\n  terax run stop [<run>]\n\n\
 The app must be running. Commands launched in a Terax pane target that pane's space.\n\
 Each task runs in its own worktree on branch task/<id>; at most 4 run at once and the rest queue.\n\
 Stopping keeps the worktree."
@@ -1017,6 +1152,35 @@ mod tests {
         assert_eq!(
             response_timeout(METHOD_TASK_WAIT, &json!({ "timeout_secs": 999_999 })),
             Duration::from_secs(MAX_WAIT_SECS) + IO_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn parses_screen_and_merge_for_the_supervisor() {
+        let request = |values: &[&str]| match parse_args(args(values)).expect("parse").action {
+            Action::Request { method, params } => (method, params),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(
+            request(&["task", "screen", "ab-1", "--lines", "40"]),
+            (METHOD_TASK_SCREEN, json!({ "task": "ab-1", "lines": 40 }))
+        );
+        assert!(parse_args(args(&["task", "screen"])).is_err());
+        assert!(parse_args(args(&["task", "screen", "ab-1", "--lines", "0"])).is_err());
+        assert_eq!(request(&["task", "merge"]), (METHOD_TASK_MERGE, json!({})));
+        assert_eq!(
+            request(&["task", "merge", "ab-2", "--check"]),
+            (METHOD_TASK_MERGE, json!({ "task": "ab-2", "check": true }))
+        );
+        assert_eq!(
+            request(&["task", "merge", "--continue"]),
+            (METHOD_TASK_MERGE, json!({ "continue": true }))
+        );
+        assert!(parse_args(args(&["task", "merge", "--continue", "--abort"])).is_err());
+        assert!(parse_args(args(&["task", "merge", "--force"])).is_err());
+        assert_eq!(
+            response_timeout(METHOD_TASK_MERGE, &json!({})),
+            MERGE_TIMEOUT
         );
     }
 

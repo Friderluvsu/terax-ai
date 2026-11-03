@@ -1,6 +1,7 @@
 export {
   parseTaskClose,
   parseTaskOpen,
+  parseTaskScreen,
   parseTaskSend,
   type TaskOpenRequest,
   TaskRequestError,

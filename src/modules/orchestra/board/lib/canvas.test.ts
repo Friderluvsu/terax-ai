@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   clampZoom,
   fitView,
-  MIN_TILE,
+  MIN_GRID,
   placeTile,
-  resizeRect,
+  resizeGrid,
+  TILE_BORDER,
+  TILE_HEADER,
   TILE_SIZE,
+  tileSize,
   toScreen,
   zoomAt,
 } from "./canvas";
@@ -46,10 +49,42 @@ describe("view math", () => {
     expect(right.x + right.w).toBeLessThanOrEqual(700);
     expect(fitView(rects, { w: 5000, h: 5000 }).zoom).toBe(1);
   });
+});
 
-  it("never shrinks a tile below its minimum", () => {
-    const rect = { x: 0, y: 0, w: 300, h: 200 };
-    expect(resizeRect(rect, -1000, -1000, 1)).toMatchObject(MIN_TILE);
-    expect(resizeRect(rect, 100, 0, 0.5).w).toBe(500);
+describe("resizeGrid", () => {
+  const cell = { width: 8, height: 17 };
+
+  it("resizes by whole cells and keeps the rest of the grid", () => {
+    expect(resizeGrid({ cols: 80, rows: 20 }, 80, 34, cell)).toEqual({
+      cols: 90,
+      rows: 22,
+    });
+    expect(resizeGrid({ cols: 80, rows: 20 }, 3, 5, cell)).toEqual({
+      cols: 80,
+      rows: 20,
+    });
+  });
+
+  it("never shrinks below the minimum", () => {
+    expect(resizeGrid({ cols: 40, rows: 10 }, -9999, -9999, cell)).toEqual(
+      MIN_GRID,
+    );
+  });
+});
+
+describe("tileSize", () => {
+  it("fits exactly cols x rows cells at any font size, so zoom cannot reflow", () => {
+    const grid = { cols: 76, rows: 18 };
+    for (const cell of [
+      { width: 5, height: 11 },
+      { width: 8, height: 17 },
+      { width: 12, height: 26 },
+    ]) {
+      const size = tileSize(grid, cell);
+      const bodyW = size.w - TILE_BORDER;
+      const bodyH = size.h - TILE_BORDER - TILE_HEADER;
+      expect(Math.floor(bodyW / cell.width)).toBe(grid.cols);
+      expect(Math.floor(bodyH / cell.height)).toBe(grid.rows);
+    }
   });
 });

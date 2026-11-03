@@ -52,11 +52,13 @@ function hasResult(task: BoardTask): boolean {
 export function TileHeader({
   task,
   isConsole,
+  supervised,
   cwd,
   onPointerDown,
 }: {
   task: BoardTask | undefined;
   isConsole: boolean;
+  supervised: boolean;
   cwd: string;
   onPointerDown: (event: React.PointerEvent) => void;
 }) {
@@ -99,7 +101,7 @@ export function TileHeader({
         <>
           <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
           <span className="font-medium">
-            {isConsole ? "Console" : "Worker"}
+            {isConsole ? (supervised ? "Supervisor" : "Console") : "Worker"}
           </span>
           <span className="min-w-0 truncate text-muted-foreground">
             {basename(cwd)}

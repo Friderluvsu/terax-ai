@@ -303,6 +303,7 @@ mod tests {
             model: None,
             checks: None,
             unreported: false,
+            merged: false,
         }
     }
 

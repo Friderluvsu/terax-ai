@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Rect, View } from "./lib/canvas";
+import type { Grid, Rect, View } from "./lib/canvas";
 import type { Draft, Planner } from "./lib/drafts";
 
 export type BoardState = {
@@ -8,7 +8,11 @@ export type BoardState = {
   check: string;
   drafts: Draft[];
   planning: boolean;
+  /** A supervisor agent should answer the workers and merge their work. */
+  supervise: boolean;
+  supervising: boolean;
   rects: Record<number, Rect>;
+  grids: Record<number, Grid>;
   view: View;
 };
 
@@ -18,7 +22,10 @@ const EMPTY: BoardState = {
   check: "",
   drafts: [],
   planning: false,
+  supervise: true,
+  supervising: false,
   rects: {},
+  grids: {},
   view: { x: 32, y: 32, zoom: 1 },
 };
 

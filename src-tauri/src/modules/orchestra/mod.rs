@@ -4,8 +4,10 @@
 
 pub mod catalog;
 pub mod checks;
+pub mod merge;
 pub mod plan;
 pub mod run;
+pub mod supervisor;
 pub mod worktree;
 
 use std::collections::{BTreeMap, HashMap};
@@ -15,8 +17,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terax_control_protocol::{
     validate_brief, validate_check_command, validate_model, validate_send_text, validate_title,
-    CheckStatus, TaskCreateParams, TaskInfo, TaskOpenParams, TaskStatus, TASK_AGENTS,
+    CheckStatus, TaskCreateParams, TaskInfo, TaskMergeParams, TaskOpenParams, TaskStatus,
+    TASK_AGENTS,
 };
+
+use serde::Serialize;
 
 use checks::CheckJob;
 use run::{Admission, Promotion, Run};
@@ -45,6 +50,8 @@ type Listener = Box<dyn Fn() + Send + Sync>;
 #[derive(Default)]
 pub struct Orchestra {
     inner: Mutex<Inner>,
+    /// One merge at a time: they share the integration worktree.
+    merge_lock: Mutex<()>,
     changed: Condvar,
     listener: OnceLock<Listener>,
 }
@@ -75,6 +82,46 @@ pub struct TaskResult {
     pub task: TaskInfo,
     pub result: Option<String>,
     pub check_log: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct MergeSkip {
+    pub task: String,
+    pub reason: String,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct MergeConflict {
+    pub task: Option<String>,
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct MergeCheck {
+    pub passed: bool,
+    pub log: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct MergeReport {
+    pub branch: String,
+    pub worktree: String,
+    pub merged: Vec<String>,
+    pub already: Vec<String>,
+    pub skipped: Vec<MergeSkip>,
+    /// Tasks that have not finished yet, so they were not merged.
+    pub waiting: Vec<String>,
+    pub conflict: Option<MergeConflict>,
+    pub continued: bool,
+    pub aborted: bool,
+    pub check: Option<MergeCheck>,
+}
+
+pub struct Supervision {
+    pub run: String,
+    pub repo: String,
+    pub base: String,
+    pub integration: PathBuf,
 }
 
 #[derive(Default)]
@@ -395,6 +442,7 @@ impl Orchestra {
             model: params.model,
             checks: None,
             unreported: false,
+            merged: false,
         };
         run.tasks.push(task.clone());
         let mut evicted = None;
@@ -663,6 +711,233 @@ impl Orchestra {
         })
     }
 
+    /// Makes `pane_id` the supervisor of a board run: it may wait on, answer,
+    /// stop, create and merge that run's tasks, like an orchestrator pane.
+    pub fn supervise(&self, run_id: &str, pane_id: u32) -> Result<Supervision, OrchestraError> {
+        let mut inner = self.lock();
+        let root = inner.root.clone().ok_or_else(unavailable)?;
+        if Self::role(&inner, pane_id) == Role::Worker {
+            return Err(forbidden("worker panes cannot supervise"));
+        }
+        let run = inner
+            .runs
+            .get(run_id)
+            .filter(|run| run.board)
+            .ok_or_else(|| ("not_found", format!("unknown board run {run_id}")))?
+            .clone();
+        inner.orchestrators.insert(pane_id, run.id.clone());
+        let integration = root.join(&run.id).join("integration");
+        drop(inner);
+        Ok(Supervision {
+            run: run.id,
+            repo: run.repo,
+            base: run.base,
+            integration,
+        })
+    }
+
+    /// The pane showing a worker, for reading what it is asking.
+    pub fn screen_target(&self, caller: Caller, task_id: &str) -> Result<u32, OrchestraError> {
+        let inner = self.lock();
+        let run_id = match Self::require_orchestrator(&inner, caller) {
+            Ok(run) => Some(run),
+            Err(_) if matches!(caller, Caller::External) => None,
+            Err(error) => return Err(error),
+        };
+        let (_, task) = find_task(&inner.runs, task_id)?;
+        if run_id.as_ref().is_some_and(|run| run != &task.run) {
+            return Err(forbidden("task belongs to another run"));
+        }
+        task.pane_id.ok_or_else(|| {
+            (
+                "invalid_state",
+                format!("task {task_id} has no open worker terminal; read its result instead"),
+            )
+        })
+    }
+
+    /// Merges finished tasks into the run's integration branch, or settles an
+    /// open conflict. Runs git without the state lock.
+    pub fn merge(
+        &self,
+        caller: Caller,
+        params: TaskMergeParams,
+    ) -> Result<MergeReport, OrchestraError> {
+        let (root, run) = {
+            let inner = self.lock();
+            let run_id = Self::require_orchestrator(&inner, caller)?;
+            let run = inner
+                .runs
+                .get(&run_id)
+                .cloned()
+                .ok_or_else(|| ("not_found", format!("unknown run {run_id}")))?;
+            (inner.root.clone().ok_or_else(unavailable)?, run)
+        };
+        let _serial = self.merge_lock.lock().expect("merge lock poisoned");
+        let repo = Path::new(&run.repo);
+        let run_dir = root.join(&run.id);
+        let git_failed = |error: String| ("git_failed", error);
+        let worktree =
+            merge::ensure_worktree(repo, &run_dir, &run.id, &run.base).map_err(git_failed)?;
+        let mut report = MergeReport {
+            branch: merge::integration_branch(&run.id),
+            worktree: worktree.to_string_lossy().into_owned(),
+            ..MergeReport::default()
+        };
+        let invalid = |error: String| ("invalid_state", error);
+        if params.abort {
+            merge::merge_abort(&worktree).map_err(invalid)?;
+            report.aborted = true;
+        } else if params.continue_merge {
+            merge::merge_continue(&worktree).map_err(invalid)?;
+            report.continued = true;
+        } else if merge::merge_in_progress(&worktree) {
+            report.conflict = Some(open_conflict(&run, &worktree));
+        } else {
+            self.merge_tasks(&root, &run, &worktree, &params, &mut report)?;
+        }
+        self.refresh_merged(&run, &worktree);
+        let settled = report.conflict.is_none() && !merge::merge_in_progress(&worktree);
+        if params.check && settled {
+            let command = run
+                .check
+                .clone()
+                .ok_or_else(|| ("invalid_state", "this run has no check command".to_string()))?;
+            let log = run_dir.join("integration").join("check.log");
+            let job = CheckJob {
+                task: format!("{}-integration", run.id),
+                command,
+                cwd: worktree.clone(),
+                target: run_dir.join("integration").join("target"),
+                log: log.clone(),
+            };
+            let passed = checks::run(&job).map_err(internal)?;
+            report.check = Some(MergeCheck {
+                passed,
+                log: checks::read_tail(&log, checks::LOG_TAIL_BYTES),
+            });
+        }
+        Ok(report)
+    }
+
+    fn merge_tasks(
+        &self,
+        root: &Path,
+        run: &Run,
+        worktree: &Path,
+        params: &TaskMergeParams,
+        report: &mut MergeReport,
+    ) -> Result<(), OrchestraError> {
+        let tasks: Vec<&TaskInfo> = match &params.task {
+            Some(id) => vec![run
+                .tasks
+                .iter()
+                .find(|task| &task.id == id)
+                .ok_or_else(|| ("not_found", format!("unknown task {id} in this run")))?],
+            None => run.tasks.iter().collect(),
+        };
+        for task in tasks {
+            let id = task.id.clone();
+            if task.merged || merge::is_merged(worktree, &run.base, &task.branch) {
+                report.already.push(id);
+                continue;
+            }
+            let skip = |report: &mut MergeReport, reason: &str| {
+                report.skipped.push(MergeSkip {
+                    task: id.clone(),
+                    reason: reason.to_string(),
+                })
+            };
+            match task.status {
+                TaskStatus::Done => {}
+                TaskStatus::Queued
+                | TaskStatus::Starting
+                | TaskStatus::Running
+                | TaskStatus::NeedsInput => {
+                    report.waiting.push(id);
+                    continue;
+                }
+                _ => {
+                    skip(report, "the task failed or was stopped");
+                    continue;
+                }
+            }
+            match task.checks {
+                Some(CheckStatus::Running) => {
+                    report.waiting.push(id);
+                    continue;
+                }
+                Some(CheckStatus::Failed) => {
+                    skip(report, "its checks failed; ask the worker to fix them");
+                    continue;
+                }
+                _ => {}
+            }
+            let paths = worktree::task_paths(root, &run.id, &task.id).map_err(internal)?;
+            let dirty = merge::uncommitted(&paths.worktree).map_err(|e| ("git_failed", e))?;
+            if !dirty.is_empty() {
+                let shown: Vec<&str> = dirty.iter().take(5).map(String::as_str).collect();
+                skip(
+                    report,
+                    &format!(
+                        "it has uncommitted changes ({}); ask the worker to commit",
+                        shown.join(", ")
+                    ),
+                );
+                continue;
+            }
+            if merge::commits_ahead(worktree, &run.base, &task.branch) == 0 {
+                skip(report, "its branch has no commits");
+                continue;
+            }
+            let message = format!(
+                "Merge {}: {}",
+                task.branch,
+                task.title.as_deref().unwrap_or(&task.id)
+            );
+            match merge::merge_branch(worktree, &task.branch, &message)
+                .map_err(|e| ("git_failed", e))?
+            {
+                merge::Merged::Done { .. } => report.merged.push(id),
+                merge::Merged::AlreadyIn => report.already.push(id),
+                merge::Merged::Conflict { files } => {
+                    report.conflict = Some(MergeConflict {
+                        task: Some(id),
+                        files,
+                    });
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh_merged(&self, run: &Run, worktree: &Path) {
+        let flags: Vec<(String, bool)> = run
+            .tasks
+            .iter()
+            .map(|task| {
+                (
+                    task.id.clone(),
+                    merge::is_merged(worktree, &run.base, &task.branch),
+                )
+            })
+            .collect();
+        let mut inner = self.lock();
+        let mut changed = false;
+        for (id, merged) in flags {
+            if let Ok(task) = find_task_mut(&mut inner.runs, &id) {
+                if task.merged != merged {
+                    task.merged = merged;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            let _ = self.commit(inner, &[&run.id]);
+        }
+    }
+
     /// Validates a follow-up for a worker and returns its pane.
     pub fn send_target(
         &self,
@@ -756,6 +1031,20 @@ impl Orchestra {
         let ids: Vec<&str> = runs.iter().map(String::as_str).collect();
         let _ = self.commit(inner, &ids);
         promotion
+    }
+}
+
+/// Names the task whose branch an unfinished merge is bringing in.
+fn open_conflict(run: &Run, worktree: &Path) -> MergeConflict {
+    let head = merge::rev(worktree, "MERGE_HEAD");
+    let task = run
+        .tasks
+        .iter()
+        .find(|task| head.is_some() && merge::rev(worktree, &task.branch) == head)
+        .map(|task| task.id.clone());
+    MergeConflict {
+        task,
+        files: merge::conflicted_files(worktree).unwrap_or_default(),
     }
 }
 
@@ -940,6 +1229,180 @@ mod tests {
                 .0,
             "forbidden"
         );
+    }
+
+    fn commit_in(task: &TaskInfo, file: &str, contents: &str) {
+        std::fs::write(Path::new(&task.worktree).join(file), contents).unwrap();
+        for args in [vec!["add", "-A"], vec!["commit", "--quiet", "-m", "work"]] {
+            assert!(Command::new("git")
+                .args(["-c", "user.email=t@example.com", "-c", "user.name=t"])
+                .args(&args)
+                .current_dir(&task.worktree)
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+
+    /// A board run with a supervisor pane (1) and two started workers (10, 11).
+    fn supervised(f: &Fixture) -> (String, TaskInfo, TaskInfo) {
+        let run = f
+            .orchestra
+            .orchestrate(Caller::Board, f.repo.path(), None)
+            .unwrap();
+        f.orchestra.supervise(&run.id, 1).unwrap();
+        let mut tasks = Vec::new();
+        for pane in [10, 11] {
+            let created = f
+                .orchestra
+                .create_task(Caller::Pane(1), params("do it"))
+                .unwrap();
+            f.orchestra.prepare_worktree(&created.task.id).unwrap();
+            f.orchestra.attach_pane(&created.task.id, pane);
+            tasks.push(f.task(&created.task.id));
+        }
+        let second = tasks.pop().unwrap();
+        (run.id, tasks.pop().unwrap(), second)
+    }
+
+    #[test]
+    fn a_supervisor_reads_worker_screens_and_only_for_its_own_run() {
+        let f = fixture();
+        let (_, first, _) = supervised(&f);
+        assert_eq!(
+            f.orchestra
+                .screen_target(Caller::Pane(1), &first.id)
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            f.orchestra
+                .screen_target(Caller::Pane(2), &first.id)
+                .unwrap_err()
+                .0,
+            "not_orchestrator"
+        );
+        assert!(f
+            .orchestra
+            .screen_target(Caller::External, &first.id)
+            .is_ok());
+        let other = f.orchestrate(3);
+        let _ = other;
+        assert_eq!(
+            f.orchestra
+                .screen_target(Caller::Pane(3), &first.id)
+                .unwrap_err()
+                .0,
+            "forbidden"
+        );
+        assert_eq!(
+            f.orchestra.supervise("nope", 5).err().map(|e| e.0),
+            Some("not_found")
+        );
+        assert_eq!(
+            f.orchestra.supervise(&first.run, 10).err().map(|e| e.0),
+            None,
+            "workers are made by the pane registry, not by this call"
+        );
+    }
+
+    #[test]
+    fn merging_waits_for_unfinished_tasks_then_merges_into_one_branch() {
+        let f = fixture();
+        let (run, first, second) = supervised(&f);
+        commit_in(&first, "a.txt", "from one\n");
+        commit_in(&second, "b.txt", "from two\n");
+        f.orchestra.agent_signal(10, "finished");
+
+        let report = f
+            .orchestra
+            .merge(Caller::Pane(1), TaskMergeParams::default())
+            .unwrap();
+        assert_eq!(report.merged, std::slice::from_ref(&first.id));
+        assert_eq!(report.waiting, std::slice::from_ref(&second.id));
+        assert_eq!(report.branch, format!("orchestra/{run}"));
+        assert!(f.task(&first.id).merged);
+        assert!(!f.task(&second.id).merged);
+
+        f.orchestra.agent_signal(11, "finished");
+        let report = f
+            .orchestra
+            .merge(Caller::Pane(1), TaskMergeParams::default())
+            .unwrap();
+        assert_eq!(report.merged, std::slice::from_ref(&second.id));
+        assert_eq!(report.already, std::slice::from_ref(&first.id));
+        assert!(report.conflict.is_none() && report.waiting.is_empty());
+        let integration = PathBuf::from(&report.worktree);
+        assert!(integration.join("a.txt").exists() && integration.join("b.txt").exists());
+        assert!(
+            !f.repo.path().join("a.txt").exists(),
+            "the user's checkout is untouched"
+        );
+
+        let again = f
+            .orchestra
+            .merge(Caller::Pane(1), TaskMergeParams::default())
+            .unwrap();
+        assert!(again.merged.is_empty() && again.already.len() == 2);
+    }
+
+    #[test]
+    fn uncommitted_work_is_skipped_and_a_conflict_is_settled_with_continue() {
+        let f = fixture();
+        let (_, first, second) = supervised(&f);
+        commit_in(&first, "same.txt", "one\n");
+        commit_in(&second, "same.txt", "two\n");
+        std::fs::write(Path::new(&second.worktree).join("loose.txt"), "x").unwrap();
+        f.orchestra.agent_signal(10, "finished");
+        f.orchestra.agent_signal(11, "finished");
+
+        let report = f
+            .orchestra
+            .merge(Caller::Pane(1), TaskMergeParams::default())
+            .unwrap();
+        assert_eq!(report.merged, std::slice::from_ref(&first.id));
+        assert_eq!(report.skipped.len(), 1);
+        assert!(report.skipped[0].reason.contains("uncommitted"));
+
+        std::fs::remove_file(Path::new(&second.worktree).join("loose.txt")).unwrap();
+        let report = f
+            .orchestra
+            .merge(Caller::Pane(1), TaskMergeParams::default())
+            .unwrap();
+        let conflict = report.conflict.expect("same line edited twice");
+        assert_eq!(conflict.task.as_deref(), Some(second.id.as_str()));
+        assert_eq!(conflict.files, ["same.txt"]);
+
+        let open = f
+            .orchestra
+            .merge(Caller::Pane(1), TaskMergeParams::default())
+            .unwrap();
+        assert_eq!(
+            open.conflict.unwrap().task.as_deref(),
+            Some(second.id.as_str())
+        );
+
+        std::fs::write(
+            PathBuf::from(&report.worktree).join("same.txt"),
+            "one and two\n",
+        )
+        .unwrap();
+        let done = f
+            .orchestra
+            .merge(
+                Caller::Pane(1),
+                TaskMergeParams {
+                    continue_merge: true,
+                    ..TaskMergeParams::default()
+                },
+            )
+            .unwrap();
+        assert!(done.continued && done.conflict.is_none());
+        assert!(f.task(&second.id).merged);
+        assert!(f
+            .orchestra
+            .merge(Caller::Pane(2), TaskMergeParams::default())
+            .is_err());
     }
 
     #[test]

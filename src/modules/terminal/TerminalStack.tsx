@@ -8,6 +8,8 @@ import {
   beginTerminalResizeInteraction,
   endTerminalResizeInteraction,
 } from "./lib/terminalResizeInteraction";
+import { setLeafFontScale, useLeafCell } from "./lib/leafGeometry";
+import { whenSessionReady, writeToSession } from "./lib/terminalSessionApi";
 import { PaneTreeView } from "./PaneTreeView";
 import type { TerminalPaneHandle } from "./TerminalPane";
 
@@ -121,6 +123,10 @@ export function TerminalStack({
                       getBundle={getBundle}
                     />
                   )}
+                  useLeafCell={useLeafCell}
+                  writeToLeaf={writeToSession}
+                  whenLeafReady={whenSessionReady}
+                  setLeafFontScale={setLeafFontScale}
                   onResizing={(token, active) =>
                     active
                       ? beginTerminalResizeInteraction(token)

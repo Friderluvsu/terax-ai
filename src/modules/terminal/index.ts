@@ -18,6 +18,7 @@ export {
   disposeSession,
   leafHasForegroundProcess,
   leafIdForPty,
+  leafScreen,
   navigateFocusedBlocks,
   ptyIdForLeaf,
   respawnSession,

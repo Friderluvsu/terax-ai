@@ -14,6 +14,8 @@ pub const METHOD_TASK_STOP: &str = "task.stop";
 pub const METHOD_TASK_WAIT: &str = "task.wait";
 pub const METHOD_TASK_RESULT: &str = "task.result";
 pub const METHOD_TASK_SEND: &str = "task.send";
+pub const METHOD_TASK_SCREEN: &str = "task.screen";
+pub const METHOD_TASK_MERGE: &str = "task.merge";
 pub const METHOD_RUN_STOP: &str = "run.stop";
 pub const SERVER_RESPONSE_ID: &str = "server";
 pub const METHODS: &[&str] = &[
@@ -28,6 +30,8 @@ pub const METHODS: &[&str] = &[
     METHOD_TASK_WAIT,
     METHOD_TASK_RESULT,
     METHOD_TASK_SEND,
+    METHOD_TASK_SCREEN,
+    METHOD_TASK_MERGE,
     METHOD_RUN_STOP,
 ];
 pub const MAX_BRIEF_BYTES: usize = 16 * 1024;
@@ -177,6 +181,38 @@ pub struct TaskWaitParams {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TaskScreenParams {
+    pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<u32>,
+}
+
+/// `task.merge` merges one finished task, or every finished task when `task`
+/// is absent, into the run's integration branch. `continue` commits a
+/// resolved conflict and `abort` drops it.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct TaskMergeParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, rename = "continue", skip_serializing_if = "std::ops::Not::not")]
+    pub continue_merge: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub abort: bool,
+    /// Run the run's check command in the integration worktree afterwards.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PaneScreenParams {
+    pub pane_id: u32,
+    pub lines: u32,
+}
+
+pub const MAX_SCREEN_LINES: u32 = 200;
+pub const DEFAULT_SCREEN_LINES: u32 = 60;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TaskSendParams {
     pub task: String,
     pub text: String,
@@ -248,6 +284,9 @@ pub struct TaskInfo {
     /// Settled but not yet returned by `task.wait`.
     #[serde(default)]
     pub unreported: bool,
+    /// Merged into the run's integration branch.
+    #[serde(default)]
+    pub merged: bool,
 }
 
 /// Sent to the UI when a task leaves the queue: it opens one worker tab.
@@ -346,6 +385,7 @@ pub fn validate_title(title: &str) -> Result<(), String> {
 pub const FRONTEND_TASK_OPEN: &str = "task.open";
 pub const FRONTEND_TASK_CLOSE: &str = "task.close";
 pub const FRONTEND_TASK_SEND: &str = "task.send";
+pub const FRONTEND_TASK_SCREEN: &str = "task.screen";
 
 #[cfg(test)]
 mod tests {
@@ -387,6 +427,17 @@ mod tests {
     }
 
     #[test]
+    fn merge_params_use_the_continue_keyword_on_the_wire() {
+        let params: TaskMergeParams =
+            serde_json::from_value(json!({ "continue": true, "check": true })).unwrap();
+        assert!(params.continue_merge && params.check && !params.abort);
+        assert_eq!(
+            serde_json::to_value(TaskMergeParams::default()).unwrap(),
+            json!({})
+        );
+    }
+
+    #[test]
     fn protocol_version_is_locked_at_one() {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(MAX_MESSAGE_BYTES, 64 * 1024);
@@ -408,6 +459,8 @@ mod tests {
                 "task.wait",
                 "task.result",
                 "task.send",
+                "task.screen",
+                "task.merge",
                 "run.stop",
             ]
         );

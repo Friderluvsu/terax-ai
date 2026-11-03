@@ -16,6 +16,7 @@ import {
 import {
   hasLeaf,
   leafIds,
+  leafScreen,
   whenSessionReady,
   writeToSession,
 } from "@/modules/terminal";
@@ -170,6 +171,10 @@ export function useOrchestraTabs({
     return true;
   }, []);
 
+  const screenTask = useCallback((paneId: number, lines: number) => {
+    return leafScreen(paneId, lines)?.text ?? null;
+  }, []);
+
   const openBoard = useCallback(
     async (cwd: string | undefined) => {
       if (!cwd) {
@@ -193,5 +198,5 @@ export function useOrchestraTabs({
     [tabsRef, activeSpaceIdRef, setActiveId, newBoardTab],
   );
 
-  return { openTask, closeTask, sendTask, openBoard };
+  return { openTask, closeTask, sendTask, screenTask, openBoard };
 }

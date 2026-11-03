@@ -3,7 +3,6 @@ export type View = { x: number; y: number; zoom: number };
 export type Size = { w: number; h: number };
 
 export const TILE_SIZE: Size = { w: 560, h: 340 };
-export const MIN_TILE: Size = { w: 280, h: 160 };
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.5;
 const GAP = 24;
@@ -34,8 +33,7 @@ export function placeTile(taken: Rect[], size: Size = TILE_SIZE): Rect {
   }
 }
 
-/** Zoom changes tile geometry rather than scaling pixels, so terminal text
- *  stays sharp and pointer math needs no correction. */
+/** Tiles keep their size in cells; only their position follows the zoom. */
 export function toScreen(rect: Rect, view: View): Rect {
   return {
     x: Math.round(rect.x * view.zoom + view.x),
@@ -80,10 +78,36 @@ export function moveRect(rect: Rect, dx: number, dy: number, zoom: number) {
   return { ...rect, x: rect.x + dx / zoom, y: rect.y + dy / zoom };
 }
 
-export function resizeRect(rect: Rect, dx: number, dy: number, zoom: number) {
+export type Grid = { cols: number; rows: number };
+
+export const TILE_HEADER = 32;
+export const TILE_BORDER = 2;
+
+/** Outer tile size for a grid of cells. The terminal body is exactly
+ *  `cols x rows` cells, so its fit can never change the column count. */
+export function tileSize(
+  grid: Grid,
+  cell: { width: number; height: number },
+): Size {
   return {
-    ...rect,
-    w: Math.max(MIN_TILE.w, rect.w + dx / zoom),
-    h: Math.max(MIN_TILE.h, rect.h + dy / zoom),
+    w: grid.cols * cell.width + TILE_BORDER,
+    h: TILE_HEADER + grid.rows * cell.height + TILE_BORDER,
+  };
+}
+
+export const DEFAULT_GRID: Grid = { cols: 76, rows: 18 };
+export const MIN_GRID: Grid = { cols: 30, rows: 6 };
+
+/** Resizes a tile by whole cells, so the terminal never ends up with a
+ *  fractional row or column. */
+export function resizeGrid(
+  grid: Grid,
+  dx: number,
+  dy: number,
+  cell: { width: number; height: number },
+): Grid {
+  return {
+    cols: Math.max(MIN_GRID.cols, grid.cols + Math.round(dx / cell.width)),
+    rows: Math.max(MIN_GRID.rows, grid.rows + Math.round(dy / cell.height)),
   };
 }

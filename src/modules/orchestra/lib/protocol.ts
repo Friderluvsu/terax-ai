@@ -18,6 +18,12 @@ export type TaskOpenRequest = {
 
 export type TaskSendRequest = { paneId: number; text: string };
 
+export type SupervisorFiles = {
+  guidePath: string;
+  settingsPath: string;
+  jobPath: string;
+};
+
 export class TaskRequestError extends Error {
   constructor(
     readonly code: string,
@@ -97,6 +103,54 @@ export function parseTaskOpen(params: unknown): TaskOpenRequest {
       return run;
     }),
   };
+}
+
+export function parseTaskScreen(params: unknown): {
+  paneId: number;
+  lines: number;
+} {
+  const paneId = requirePaneId(params);
+  const lines = (params as Record<string, unknown>).lines;
+  if (
+    !Number.isSafeInteger(lines) ||
+    (lines as number) < 1 ||
+    (lines as number) > 200
+  ) {
+    invalid("lines must be an integer from 1 to 200");
+  }
+  return { paneId, lines: lines as number };
+}
+
+export function parseSupervisorFiles(value: unknown): SupervisorFiles {
+  const record =
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    guidePath: requireText(record.guide_path, "guide_path", 4096),
+    settingsPath: requireText(record.settings_path, "settings_path", 4096),
+    jobPath: requireText(record.job_path, "job_path", 4096),
+  };
+}
+
+// The guide is the system prompt and the settings pre-approve only the Terax
+// CLI and edits inside the integration worktree, so nothing is installed into
+// the user's Claude config.
+export function supervisorLaunchCommand(
+  command: string,
+  files: SupervisorFiles,
+  windows?: boolean,
+): string {
+  const prompt = `Read the job and run id in ${files.jobPath} and supervise that run now, following your instructions.`;
+  return [
+    command,
+    "--settings",
+    quoteShellArg(files.settingsPath, windows),
+    "--append-system-prompt-file",
+    quoteShellArg(files.guidePath, windows),
+    "--",
+    quoteShellArg(prompt, windows),
+  ].join(" ");
 }
 
 export function parseTaskClose(params: unknown): number {

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseSupervisorFiles,
   parseTaskClose,
   parseTaskOpen,
+  parseTaskScreen,
   parseTaskSend,
+  supervisorLaunchCommand,
   type TaskOpenRequest,
   workerLaunchCommand,
 } from "./protocol";
@@ -72,6 +75,39 @@ describe("parseTaskSend", () => {
       parseTaskSend({ pane_id: 3, text: "x".repeat(4097) }),
     ).toThrow();
     expect(() => parseTaskSend({ text: "x" })).toThrow();
+  });
+});
+
+describe("supervisor launch", () => {
+  it("passes the guide and settings and ends options before the prompt", () => {
+    const files = parseSupervisorFiles({
+      guide_path: "/a b/guide.md",
+      settings_path: "/a b/settings.json",
+      job_path: "/a b/job.md",
+    });
+    const command = supervisorLaunchCommand(
+      "claude --model opus",
+      files,
+      false,
+    );
+    expect(
+      command.startsWith(
+        "claude --model opus --settings '/a b/settings.json' --append-system-prompt-file '/a b/guide.md' -- '",
+      ),
+    ).toBe(true);
+    expect(command).toContain("/a b/job.md");
+    expect(command).not.toContain("\n");
+    expect(() => parseSupervisorFiles({ guide_path: "x" })).toThrow();
+  });
+
+  it("validates screen requests", () => {
+    expect(parseTaskScreen({ pane_id: 3, lines: 60 })).toEqual({
+      paneId: 3,
+      lines: 60,
+    });
+    expect(() => parseTaskScreen({ pane_id: 3, lines: 0 })).toThrow();
+    expect(() => parseTaskScreen({ pane_id: 3, lines: 500 })).toThrow();
+    expect(() => parseTaskScreen({ lines: 5 })).toThrow();
   });
 });
 

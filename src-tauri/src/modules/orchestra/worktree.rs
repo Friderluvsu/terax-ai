@@ -97,7 +97,9 @@ pub fn create(repo: &Path, base: &str, branch: &str, paths: &TaskPaths) -> Resul
     .map(|_| ())
 }
 
-fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
+/// Runs git and returns (success, stdout, stderr) without judging the exit
+/// status, for callers that read a failure such as a merge conflict.
+pub(super) fn git_raw(cwd: &Path, args: &[&str]) -> Result<(bool, String, String), String> {
     let mut cmd = Command::new("git");
     cmd.args(args)
         .current_dir(cwd)
@@ -109,11 +111,19 @@ fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     crate::modules::proc::hide_console(&mut cmd);
     let child = cmd.spawn().map_err(|error| format!("run git: {error}"))?;
     let output = wait_with_timeout(child)?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+pub(super) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let (ok, stdout, stderr) = git_raw(cwd, args)?;
+    if !ok {
         return Err(format!("git {}: {}", args[0], stderr.trim()));
     }
-    String::from_utf8(output.stdout).map_err(|_| "git returned non-UTF-8 output".to_string())
+    Ok(stdout)
 }
 
 fn wait_with_timeout(child: std::process::Child) -> Result<std::process::Output, String> {

@@ -17,6 +17,11 @@ import {
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { TerminalBackendKind } from "@/modules/terminal/backend/contracts";
 import { PtyResizeScheduler } from "@/modules/terminal/lib/ptyResizeScheduler";
+import {
+  clearLeafGeometry,
+  publishLeafCell,
+  useLeafFontScale,
+} from "@/modules/terminal/lib/leafGeometry";
 import { subscribeTerminalResizeInteraction } from "@/modules/terminal/lib/terminalResizeInteraction";
 import { useTerminalFont } from "@/modules/terminal/lib/useTerminalFont";
 import type { TerminalSearchController } from "@/modules/terminal/search/TerminalSearchController";
@@ -170,6 +175,7 @@ export function useGhosttyTerminalSession({
     (state) => state.terminalLetterSpacing,
   );
   const zoomLevel = usePreferencesStore((state) => state.zoomLevel);
+  const leafScale = useLeafFontScale(leafId);
   const fontsVersion = useSyncExternalStore(subscribeUserFonts, () =>
     getUserFontsVersion(fontFamily),
   );
@@ -179,13 +185,21 @@ export function useGhosttyTerminalSession({
   const font = useMemo<TerminalFontSpec>(
     () => ({
       family: resolveFontFamily(fontFamily),
-      size: Math.max(4, Math.round(fontSize * zoomLevel)),
+      size: Math.max(4, Math.round(fontSize * zoomLevel * leafScale)),
       lineHeight: 1.2,
       letterSpacing,
       weight: fontWeight,
       fontsVersion,
     }),
-    [fontFamily, fontSize, fontWeight, letterSpacing, zoomLevel, fontsVersion],
+    [
+      fontFamily,
+      fontSize,
+      fontWeight,
+      letterSpacing,
+      zoomLevel,
+      leafScale,
+      fontsVersion,
+    ],
   );
   const fontRef = useRef(font);
   fontRef.current = font;
@@ -461,6 +475,7 @@ export function disposeGhosttySession(leafId: number): boolean {
   session.generation += 1;
   session.input?.dispose();
   session.surface?.dispose();
+  clearLeafGeometry(leafId);
   disposeGhosttyBlocks(leafId);
   session.model?.dispose();
   session.unsubscribeResizeInteraction();
@@ -704,6 +719,13 @@ async function initializeSessionGeneration(
     corePromise,
     rendererPromise,
   ]);
+  if (alive()) {
+    publishLeafCell(session.leafId, {
+      width: metrics.cellWidth,
+      height: metrics.cellHeight,
+      fontSize: metrics.font.size,
+    });
+  }
   if (!alive()) return;
 
   const acceptHost = createSessionOsc7HostFilter(
@@ -1244,6 +1266,11 @@ async function updateSessionFont(
     return;
   }
   session.surface.setFontMetrics(metrics);
+  publishLeafCell(session.leafId, {
+    width: metrics.cellWidth,
+    height: metrics.cellHeight,
+    fontSize: metrics.font.size,
+  });
   ghosttyBlocks(session.leafId)?.changed();
   if (session.surfaceOptions)
     session.surfaceOptions = { ...session.surfaceOptions, metrics };

@@ -15,7 +15,11 @@ import { cn } from "@/lib/utils";
 import {
   AGENT_LAUNCHERS,
   type AgentLauncherId,
+  validateAgentLaunchCommand,
 } from "@/modules/agents/lib/launcher";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { parseSupervisorFiles, supervisorLaunchCommand } from "../lib/protocol";
+import { markSupervised } from "../lib/supervised";
 import {
   createParams,
   type Draft,
@@ -44,9 +48,22 @@ function label(id: AgentLauncherId): string {
   return AGENT_LAUNCHERS.find((entry) => entry.id === id)?.label ?? id;
 }
 
-type Props = { run: string; cwd: string };
+type Props = {
+  run: string;
+  cwd: string;
+  /** The Console tile, where the supervisor agent runs. */
+  consoleLeaf: number;
+  writeToLeaf: (leafId: number, text: string) => boolean;
+  whenLeafReady: (leafId: number) => Promise<void>;
+};
 
-export function PlannerBar({ run, cwd }: Props) {
+export function PlannerBar({
+  run,
+  cwd,
+  consoleLeaf,
+  writeToLeaf,
+  whenLeafReady,
+}: Props) {
   const board = useBoard(run);
   const update = useBoardStore((state) => state.update);
   const [starting, setStarting] = useState(false);
@@ -84,6 +101,39 @@ export function PlannerBar({ run, cwd }: Props) {
   const ready =
     board.drafts.length > 0 && [...problems.values()].every((p) => !p);
 
+  const startSupervisor = async () => {
+    const claude = validateAgentLaunchCommand(
+      usePreferencesStore.getState().agentLaunchCommands.claude,
+    );
+    if (!claude.ok) {
+      toast.error(`Supervisor needs Claude: ${claude.error}`);
+      return;
+    }
+    const job =
+      board.job.trim() ||
+      board.drafts
+        .map((d) => `- ${d.title || d.brief.slice(0, 80)}`)
+        .join("\n");
+    const files = parseSupervisorFiles(
+      await invoke("orchestra_supervise", {
+        run,
+        paneId: consoleLeaf,
+        job: job.slice(0, 7000),
+      }),
+    );
+    await whenLeafReady(consoleLeaf);
+    if (
+      !writeToLeaf(
+        consoleLeaf,
+        `${supervisorLaunchCommand(claude.command, files)}\r`,
+      )
+    ) {
+      throw new Error("the Console terminal is closed");
+    }
+    markSupervised(run);
+    update(run, { supervising: true });
+  };
+
   const start = async () => {
     if (!ready || starting) return;
     setStarting(true);
@@ -101,6 +151,7 @@ export function PlannerBar({ run, cwd }: Props) {
           drafts: b.drafts.filter((d) => d.id !== draft.id),
         }));
       }
+      if (board.supervise && !board.supervising) await startSupervisor();
       update(run, { job: "" });
     } catch (error) {
       toast.error(`Could not start the task: ${String(error)}`);
@@ -203,6 +254,20 @@ export function PlannerBar({ run, cwd }: Props) {
               placeholder="Check after each task, for example pnpm test (optional)"
               className="h-7 flex-1 rounded-md text-xs md:text-xs"
             />
+            <label
+              className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+              title="A Claude supervisor answers the workers' questions, waits for every task, merges all the work into one branch and resolves conflicts, so you are not asked."
+            >
+              <input
+                type="checkbox"
+                checked={board.supervise || board.supervising}
+                disabled={board.supervising}
+                onChange={(event) =>
+                  update(run, { supervise: event.target.checked })
+                }
+              />
+              Supervisor
+            </label>
             <Button
               size="sm"
               className="h-7 gap-1.5 text-xs"

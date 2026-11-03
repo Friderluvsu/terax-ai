@@ -341,6 +341,7 @@ pub fn run() {
             control::orchestra_board_create,
             control::orchestra_plan,
             control::orchestra_catalog,
+            control::orchestra_supervise,
             control::orchestra_result,
             modules::mobile::mobile_start,
             modules::mobile::mobile_stop,

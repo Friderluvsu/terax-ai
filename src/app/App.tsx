@@ -1609,6 +1609,7 @@ export default function App() {
     onTaskOpen: orchestraTabs.openTask,
     onTaskClose: orchestraTabs.closeTask,
     onTaskSend: orchestraTabs.sendTask,
+    onTaskScreen: orchestraTabs.screenTask,
   });
   useMobileBridge({ tabsRef, activeTabIdRef: activeIdRef, warmTab });
 
