@@ -4,7 +4,7 @@
 
 pub mod checks;
 pub mod run;
-pub mod skill;
+pub mod orchestrator;
 pub mod worktree;
 
 use std::collections::{BTreeMap, HashMap};

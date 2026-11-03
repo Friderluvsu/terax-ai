@@ -336,6 +336,7 @@ pub fn run() {
             control::control_frontend_ready,
             control::control_respond,
             control::orchestra_tasks,
+            control::orchestra_orchestrator_files,
             control::orchestra_stop,
             modules::mobile::mobile_start,
             modules::mobile::mobile_stop,

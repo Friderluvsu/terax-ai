@@ -272,9 +272,6 @@ pub fn agent_enable_hooks(agent: String) -> Result<(), String> {
         return enable_pi_extension();
     }
     let spec = find(&agent)?;
-    if agent == "claude" {
-        crate::modules::orchestra::skill::install();
-    }
     let path = settings_path(spec)?;
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;

@@ -38,6 +38,7 @@ type Props = {
   onNewSsh: (alias: string) => void;
   onConnectSsh: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
+  onNewOrchestrator: () => void;
   onClose: (id: number) => void;
   /** Chrome-style: close every tab to the right of the given tab. */
   onCloseTabsToRight: (id: number) => void;
@@ -75,6 +76,7 @@ export function Header({
   onNewSsh,
   onConnectSsh,
   onLaunchAgents,
+  onNewOrchestrator,
   onClose,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -189,6 +191,7 @@ export function Header({
           onNewSsh={onNewSsh}
           onConnectSsh={onConnectSsh}
           onLaunchAgents={onLaunchAgents}
+          onNewOrchestrator={onNewOrchestrator}
           onClose={onClose}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}

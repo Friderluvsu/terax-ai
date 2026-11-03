@@ -138,6 +138,35 @@ function parentDir(path: string): string {
   return cut > 0 ? path.slice(0, cut) : path;
 }
 
+export type OrchestratorFiles = { guidePath: string; settingsPath: string };
+
+export function parseOrchestratorFiles(value: unknown): OrchestratorFiles {
+  const record =
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    guidePath: requireText(record.guide_path, "guide_path", 4096),
+    settingsPath: requireText(record.settings_path, "settings_path", 4096),
+  };
+}
+
+// The guide arrives as a system prompt file and the settings pre-approve only
+// the Terax CLI, so the session needs no skill or config install.
+export function orchestratorLaunchCommand(
+  command: string,
+  files: OrchestratorFiles,
+  windows?: boolean,
+): string {
+  return [
+    command,
+    "--settings",
+    quoteShellArg(files.settingsPath, windows),
+    "--append-system-prompt-file",
+    quoteShellArg(files.guidePath, windows),
+  ].join(" ");
+}
+
 export function workerLaunchCommand(
   request: TaskOpenRequest,
   command: string,

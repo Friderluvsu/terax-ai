@@ -467,7 +467,6 @@ fn route_orchestra(
             let params: OrchestrateParams = parse_params(request.params)?;
             let cwd = validate_orchestrate_cwd(&params.cwd, app)?;
             let run = orchestra.orchestrate(caller, &cwd, params.check)?;
-            crate::modules::orchestra::skill::install();
             Ok(json!({ "run": run.id, "repo": run.repo, "base": run.base, "check": run.check }))
         }
         METHOD_TASK_CREATE => {
@@ -553,6 +552,19 @@ pub fn agent_signal(app: &tauri::AppHandle, pane_id: u32, kind: &str) {
     if let Err(error) = spawned {
         log::warn!("could not start task follow-up: {error}");
     }
+}
+
+/// Paths the frontend passes to Claude when it opens an Orchestrator tab.
+#[tauri::command]
+pub fn orchestra_orchestrator_files(app: tauri::AppHandle) -> Result<Value, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("orchestra")
+        .join("orchestrator");
+    let files = crate::modules::orchestra::orchestrator::prepare(&dir)?;
+    Ok(json!({ "guide_path": files.guide, "settings_path": files.settings }))
 }
 
 #[tauri::command]

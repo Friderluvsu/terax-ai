@@ -26,6 +26,7 @@ import {
   IncognitoIcon,
   PencilEdit02Icon,
   PlusSignIcon,
+  WorkflowSquare01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useRef, useState } from "react";
@@ -40,6 +41,7 @@ type Props = {
   onNewSsh: (alias: string) => void;
   onConnectSsh: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
+  onNewOrchestrator: () => void;
 };
 
 export function NewTabMenu({
@@ -52,6 +54,7 @@ export function NewTabMenu({
   onNewSsh,
   onConnectSsh,
   onLaunchAgents,
+  onNewOrchestrator,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const sshHosts = useSshHosts(menuOpen);
@@ -93,7 +96,7 @@ export function NewTabMenu({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
-              className="min-w-44"
+              className="min-w-56"
               onCloseAutoFocus={(event) => {
                 event.preventDefault();
                 if (!openLauncherAfterMenuClose.current) return;
@@ -137,6 +140,23 @@ export function NewTabMenu({
                   strokeWidth={1.75}
                   className="text-muted-foreground"
                 />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={onNewOrchestrator}
+                className="items-start"
+              >
+                <HugeiconsIcon
+                  icon={WorkflowSquare01Icon}
+                  size={14}
+                  strokeWidth={1.75}
+                  className="mt-0.5"
+                />
+                <span className="flex flex-1 flex-col">
+                  <span>Orchestrator</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Describe a job, Claude splits it across agents
+                  </span>
+                </span>
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={onNewPrivate}>
                 <HugeiconsIcon

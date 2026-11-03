@@ -1651,6 +1651,9 @@ export default function App() {
               onNewSsh={openSshTab}
               onConnectSsh={openSshConnect}
               onLaunchAgents={launchAgentGroup}
+              onNewOrchestrator={() =>
+                void orchestraTabs.openOrchestrator(inheritedCwdForNewTab())
+              }
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}
               onCloseOtherTabs={handleCloseOtherTabs}

@@ -855,6 +855,8 @@ fn print_task(task: &TaskInfo) {
         .and_then(|checks| serde_json::to_value(checks).ok())
         .and_then(|value| value.as_str().map(|status| format!("checks:{status}")));
     fields.extend(checks.as_deref());
+    let model = task.model.as_deref().map(|model| format!("model:{model}"));
+    fields.extend(model.as_deref());
     fields.extend(task.title.as_deref());
     println!("{}", fields.join("\t"));
     if let Some(error) = &task.error {
