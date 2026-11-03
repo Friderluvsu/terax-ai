@@ -58,12 +58,18 @@ jobs:
           pnpm check-types
           pnpm test
 
-      - name: Rust checks
+      # Advisory: the runner's stable toolchain is newer than the one the code
+      # is linted against locally, so new lints must not block a release.
+      - name: Clippy (advisory)
+        if: github.event_name == 'push' || inputs.run_checks
+        continue-on-error: true
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Rust tests
         if: github.event_name == 'push' || inputs.run_checks
         working-directory: src-tauri
-        run: |
-          cargo clippy --all-targets --locked -- -D warnings
-          cargo test --locked
+        run: cargo test --locked
 
       - name: Build app
         run: pnpm fork:build
