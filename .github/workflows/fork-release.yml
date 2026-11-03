@@ -1,0 +1,100 @@
+name: Fork release
+
+# Builds the fork as Terax.app (dev.terax.fork, ad-hoc signed) and packages the
+# DMG on a GitHub macOS runner. Run it from the Actions tab, or push a
+# `fork-v*` tag to also publish the DMG as a GitHub release.
+on:
+  workflow_dispatch:
+    inputs:
+      run_checks:
+        description: Run lint, types and tests before building
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "fork-v*"
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Frontend checks
+        if: github.event_name == 'push' || inputs.run_checks
+        run: |
+          pnpm lint
+          pnpm check-types
+          pnpm test
+
+      - name: Rust checks
+        if: github.event_name == 'push' || inputs.run_checks
+        working-directory: src-tauri
+        run: |
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+
+      - name: Build app
+        run: pnpm fork:build
+
+      - name: Sign and package
+        id: package
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/release/bundle/macos/Terax.app"
+          codesign --force --sign - "$bundle/Contents/MacOS/terax-cli"
+          codesign --force --sign - --entitlements src-tauri/entitlements.plist "$bundle"
+          codesign --verify --deep --strict "$bundle"
+          version="$(node -p "require('./package.json').version")"
+          dmg="Terax-$version-$(uname -m).dmg"
+          stage="$(mktemp -d)"
+          ditto "$bundle" "$stage/Terax.app"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -quiet -volname "Terax" -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.dmg }}
+          path: ${{ steps.package.outputs.dmg }}
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/fork-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DMG: ${{ steps.package.outputs.dmg }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" "$DMG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes \
+            --prerelease
